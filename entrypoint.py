@@ -1,3 +1,5 @@
+from threading import Lock
+
 from nicegui import ui
 from ui.layout import main_layout
 from core.api import ModuleManifest
@@ -24,6 +26,17 @@ plugin_state = {
     "status": "idle",
     "last_action": "not_started",
 }
+state_lock = Lock()
+
+
+def _set_state(**updates):
+    with state_lock:
+        plugin_state.update(updates)
+
+
+def _get_state(key):
+    with state_lock:
+        return plugin_state.get(key, "")
 
 
 def render_settings_ui(ctx):
@@ -37,10 +50,17 @@ def render_dashboard_widget(ctx):
         ui.label("Server Manager").classes("text-base font-bold")
         with ui.row().classes("w-full justify-between"):
             ui.label("Status").classes("text-xs text-slate-400")
-            ui.label().classes("text-xs font-mono").bind_text_from(plugin_state, "status")
+            status_label = ui.label().classes("text-xs font-mono")
         with ui.row().classes("w-full justify-between"):
             ui.label("Last Action").classes("text-xs text-slate-400")
-            ui.label().classes("text-xs font-mono").bind_text_from(plugin_state, "last_action")
+            last_action_label = ui.label().classes("text-xs font-mono")
+
+        def refresh_widget():
+            status_label.set_text(_get_state("status"))
+            last_action_label.set_text(_get_state("last_action"))
+
+        refresh_widget()
+        ui.timer(1.0, refresh_widget)
 
 
 def setup(ctx):
@@ -48,8 +68,7 @@ def setup(ctx):
 
     @ctx.subscribe("system:boot_complete")
     async def _on_boot_complete(payload):
-        plugin_state["status"] = "ready"
-        plugin_state["last_action"] = "boot_complete"
+        _set_state(status="ready", last_action="boot_complete")
         ctx.emit("server_manager:status", {"status": "ready"})
 
     @ui.page("/server-manager")
@@ -60,8 +79,7 @@ def setup(ctx):
             ui.label("Plugin-Basis ist initialisiert.").classes("text-sm text-slate-400")
 
             def mark_checked():
-                plugin_state["status"] = "healthy"
-                plugin_state["last_action"] = "manual_health_check"
+                _set_state(status="healthy", last_action="manual_health_check")
                 ctx.emit("server_manager:status", {"status": "healthy"})
                 ui.notify("Server-Status auf healthy gesetzt", type="positive")
 
