@@ -7,7 +7,7 @@ from core.api import ModuleManifest
 manifest = ModuleManifest(
     id="lyndrix.plugin.server_manager",
     name="Server Manager",
-    version="0.1.0",
+    version="0.0.1",
     description="Grundbasis für zentrale Server-Verwaltung in Lyndrix.",
     author="Lyndrix",
     icon="dns",
