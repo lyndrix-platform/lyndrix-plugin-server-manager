@@ -1,0 +1,72 @@
+# Example hardware catalog
+version: "1.0"
+
+server_types:
+  - id: physical
+    label: Physical Server
+    description: Bare-metal hardware ordered from an IT provider
+    icon: storage
+  - id: vm
+    label: Virtual Machine
+    description: VM provisioned in a hypervisor environment
+    icon: cloud
+  - id: container
+    label: Container Host
+    description: Container-optimized host node
+    icon: view_in_ar
+
+cpu_options:
+  - id: intel-xeon-silver-4310
+    label: "Intel Xeon Silver 4310 (12C/24T, 2.1 GHz)"
+    vendor: Intel
+    family: Xeon Silver 3rd Gen
+    cores: 12
+    threads: 24
+    base_ghz: 2.1
+    tdp_w: 120
+    socket: LGA4189
+    compatible_types: [physical]
+
+  - id: virtual-vcpu
+    label: "Virtual CPU (vCPU)"
+    vendor: Hypervisor
+    family: vCPU
+    compatible_types: [vm, container]
+
+ram_options:
+  - id: 32gb-ddr4-3200
+    label: "32 GB DDR4 3200 MHz RDIMM"
+    size_gb: 32
+    type: DDR4
+    speed_mhz: 3200
+    form: RDIMM
+    compatible_types: [physical]
+  - id: virtual-ram
+    label: "Virtual RAM (GB)"
+    type: Virtual
+    compatible_types: [vm, container]
+
+storage_options:
+  - id: 960gb-sata-ssd
+    label: "960 GB SATA SSD"
+    size_gb: 960
+    type: SSD
+    interface: SATA
+    compatible_types: [physical]
+  - id: virtual-disk
+    label: "Virtual Disk (GB)"
+    type: Virtual
+    interface: Virtual
+    compatible_types: [vm, container]
+
+network_options:
+  - id: 10gbe-dual
+    label: "2x 10 GbE SFP+"
+    ports: 2
+    speed_gbps: 10
+    compatible_types: [physical]
+  - id: virtual-nic
+    label: "Virtual NIC"
+    ports: 1
+    speed_gbps: null
+    compatible_types: [vm, container]

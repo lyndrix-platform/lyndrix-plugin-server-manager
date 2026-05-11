@@ -1,0 +1,39 @@
+# Example provider/stage catalog
+version: "2.0"
+
+providers:
+  - id: legacy
+    label: LEGACY
+    display_label: Legacy Data Center
+    profile_id: edc
+    icon: storage
+    color: amber
+    placeholder: false
+    stages:
+      - id: prod
+        label: Production
+        color: red
+        icon: verified
+        order_workflow: hardware_order_form
+        requires_approval: true
+      - id: dev
+        label: Development
+        color: green
+        icon: developer_mode
+        order_workflow: null
+        requires_approval: false
+
+  - id: internal-cloud
+    label: INTERNAL-CLOUD
+    display_label: Internal Cloud
+    profile_id: fce
+    icon: cloud_sync
+    color: cyan
+    placeholder: false
+    stages:
+      - id: prod
+        label: Production
+        color: red
+        icon: cloud_done
+        order_workflow: fce_vm_request
+        requires_approval: true

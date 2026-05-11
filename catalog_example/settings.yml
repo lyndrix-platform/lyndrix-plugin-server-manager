@@ -1,0 +1,33 @@
+# Example global settings catalog
+version: "1.0"
+
+server_statuses:
+  - id: active
+    label: "Active"
+    color: emerald
+    terminal: false
+  - id: ordered
+    label: "Ordered"
+    color: sky
+    terminal: false
+  - id: provisioning
+    label: "Provisioning"
+    color: amber
+    terminal: false
+  - id: decommissioned
+    label: "Decommissioned"
+    color: zinc
+    terminal: true
+
+os_types:
+  - id: ""
+    label: "Unknown / Not set"
+  - id: windows
+    label: "Windows Server"
+    icon: desktop_windows
+  - id: linux
+    label: "Linux"
+    icon: terminal
+  - id: unix
+    label: "Unix / BSD"
+    icon: terminal

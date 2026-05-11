@@ -1,0 +1,47 @@
+# Example product catalog
+version: "1.0"
+
+server_products:
+  - id: cloud-enterprise-server
+    label: Cloud Enterprise Server
+    description: Flexible VM product with OS-aware RAM matrix and storage limits.
+    icon: cloud
+    compatible_profiles: [fce]
+    compatible_server_types: [vm, container]
+    allowed_cpu_ids: [virtual-vcpu]
+    allowed_ram_ids: [virtual-ram]
+    allowed_storage_ids: [virtual-disk, virtual-disk-mirrored]
+    allowed_network_ids: [virtual-nic]
+    service_classes:
+      - id: SK1
+        label: SK1
+        production: false
+        monitoring: limited
+        ha: false
+    os_variants:
+      - id: WIN
+        label: Windows Server
+        icon: desktop_windows
+        os_versions:
+          - id: WIN2022
+            label: Windows Server 2022
+            lifecycle: preferred
+    resources:
+      form_factor: virtual
+      ram_step_gb: 2
+      ram_special_max_gb: 4096
+      vcpu_ram_matrix:
+        - vcpu: 2
+          per_os:
+            WIN: { ram_min: 2, ram_max: 8 }
+    overcommit:
+      cpu: 1.0
+      ram_win: 1.0
+      ram_linux: 1.0
+    hypervisor:
+      default: vmware
+      pinning_default: false
+      pinning_exceptions: []
+    rules:
+      - type: vcpu_ram_matrix
+        severity: error

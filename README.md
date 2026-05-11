@@ -1,17 +1,53 @@
 # lyndrix-server-manager
 
-Grundbasis für ein Lyndrix-Plugin zur Server-Verwaltung.
+Lyndrix plugin for server lifecycle management, built around YAML catalogs instead of hardcoded Python lists.
 
-## Enthaltene Basis
+## What lives in the catalog
 
-- `entrypoint.py` mit `ModuleManifest`
-- `setup(ctx)` mit UI-Route `/server-manager`
-- `render_dashboard_widget(ctx)` für die Lyndrix-Dashboard-Kachel
-- `render_settings_ui(ctx)` für die Plugin-Einstellungen
+The plugin loads configuration from `catalog/` at runtime:
 
-## Einbindung in Lyndrix Core
+- `hardware.yml` for CPUs, RAM, storage, network and server type options.
+- `environments.yml` for provider/stage pairs and the profile each environment belongs to.
+- `profiles.yml` for EDC/FCE feature flags, validation rules, and configurator UI limits.
+- `products.yml` for product-level constraints, service classes, OS variants, and matrices.
+- `settings.yml` for global values shared across the UI, such as server statuses and OS types.
 
-1. Repository als Plugin in `app/plugins/server_manager` einbinden
-2. Lyndrix Core starten
-3. Plugin aktivieren
-4. UI unter `/server-manager` aufrufen
+## Runtime API
+
+The catalog loader lives in `app/model/catalog.py` and is used by the controller and UI layers.
+
+- `svc.catalog.hardware()` returns `HardwareCatalog`.
+- `svc.catalog.environments()` returns `EnvironmentCatalog`.
+- `svc.catalog.profiles()` returns `ProfileCatalog`.
+- `svc.catalog.products()` returns `ProductCatalog`.
+- `svc.catalog.settings()` returns `SettingsCatalog`.
+- `svc.catalog.reload()` forces a re-read from disk.
+
+The new profile helpers used by the configurator are:
+
+- `get_ram_manual_max(profile_id)`
+- `get_disk_count_options(profile_id)`
+- `get_vm_disk_size_steps(profile_id)`
+- `get_storage_manual_max(profile_id)`
+
+`SettingsCatalog` provides:
+
+- `get_statuses()` for ordered status definitions.
+- `get_status_ids()` for the canonical server status list.
+- `get_os_types()` and `get_os_type_map()` for OS dropdowns.
+
+## Example catalog
+
+`catalog_example/` contains a compact, annotated example set of all five catalog files. Use it as a reference when adding new fields or when you want to understand how the UI derives its options from YAML.
+
+## Development flow
+
+1. Edit the YAML catalog file that owns the behavior you want to change.
+2. Reload the catalog from the UI or call `svc.catalog.reload()`.
+3. Verify the change in the configurator or overview screens.
+
+## Notes
+
+- Status ordering and labels now come from `catalog/settings.yml`.
+- Profile-specific configurator limits now come from `catalog/profiles.yml`.
+- The Python code should stay thin and defer catalog-specific values to YAML whenever possible.
