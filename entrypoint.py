@@ -50,7 +50,7 @@ log = get_logger("Plugin:ServerManager")
 manifest = ModuleManifest(
     id="lyndrix.plugin.server_manager",
     name="Server Manager",
-    version="0.0.1",
+    version="0.0.2",
     description=(
         "Central server inventory with configurable hardware catalogs, "
         "combination rules, and event-bus hooks for downstream order workflows."
