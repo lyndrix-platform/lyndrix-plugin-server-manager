@@ -5,6 +5,7 @@ __pycache__/
 
 catalog/
 example/
+vendor/
 
 # C extensions
 *.so
