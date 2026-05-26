@@ -2,6 +2,27 @@
 
 Lyndrix plugin for server lifecycle management, built around YAML catalogs instead of hardcoded Python lists.
 
+## Project structure
+
+```
+entrypoint.py          — manifest, lifecycle hooks (pure wiring layer)
+app/
+  model/
+    catalog.py         — YAML/JSON catalog loader + rule evaluator
+    database.py        — DB session helpers + table bootstrap
+    models.py          — SQLAlchemy model (server_manager_servers table)
+  controller/
+    service.py         — CRUD + event emission (singleton: server_manager_service)
+    configurator/      — 3-step guided add/edit dialog
+  ui/
+    page.py            — Main /server-manager page
+    overview.py        — Server list with search / filter
+    settings.py        — Plugin settings + catalog/event-bus documentation
+    widget.py          — Compact dashboard widget
+examples/              — Annotated sample catalog files
+tests/                 — Smoke tests
+```
+
 ## What lives in the catalog
 
 The plugin loads configuration from `catalog/` at runtime:
@@ -36,9 +57,9 @@ The new profile helpers used by the configurator are:
 - `get_status_ids()` for the canonical server status list.
 - `get_os_types()` and `get_os_type_map()` for OS dropdowns.
 
-## Example catalog
+## Configuration examples
 
-`catalog_example/` contains a compact, annotated example set of all five catalog files. Use it as a reference when adding new fields or when you want to understand how the UI derives its options from YAML.
+`examples/` contains a compact, annotated example set of all five catalog files. Use it as a reference when adding new fields or when you want to understand how the UI derives its options from YAML.
 
 ## Development flow
 
