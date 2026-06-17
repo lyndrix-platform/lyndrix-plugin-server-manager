@@ -46,27 +46,21 @@ ram_options:
     type: Virtual
     compatible_types: [vm, container]
 
+# Storage is ordered as a product in an amount (GB) — size_gb: null means the
+# capacity is whatever the user orders per storage line (no fixed disk SKUs).
 storage_options:
-  - id: 960gb-sata-ssd
-    label: "960 GB SATA SSD"
-    size_gb: 960
+  - id: edc-block-ssd
+    label: "Block Storage – SSD"
+    size_gb: null
     type: SSD
-    interface: SATA
-    compatible_types: [physical]
+    interface: Block
+    compatible_types: [physical, vm]
   - id: virtual-disk
     label: "Virtual Disk (GB)"
+    size_gb: null
     type: Virtual
     interface: Virtual
     compatible_types: [vm, container]
 
-network_options:
-  - id: 10gbe-dual
-    label: "2x 10 GbE SFP+"
-    ports: 2
-    speed_gbps: 10
-    compatible_types: [physical]
-  - id: virtual-nic
-    label: "Virtual NIC"
-    ports: 1
-    speed_gbps: null
-    compatible_types: [vm, container]
+# Network adapters / IP addresses are provided by the provider and are not ordered,
+# so no network_options are defined.

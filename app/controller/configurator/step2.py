@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from nicegui import ui
+from core.api import UIStyles
 
 from ..service import server_manager_service as svc
 
@@ -11,12 +12,10 @@ from ..service import server_manager_service as svc
 def _num_tile(val, current_val, on_select, suffix="") -> None:
     """Compact number tile used for sockets, RAM steps, vCPU, sizes."""
     is_sel = (int(current_val or 0) == int(val))
-    border = "border-primary" if is_sel else "border-zinc-700 hover:border-zinc-500 cursor-pointer"
-    bg = "bg-primary/10" if is_sel else "bg-zinc-900 hover:bg-zinc-800"
-    text = "text-primary font-bold" if is_sel else "text-zinc-300 font-semibold"
+    state = UIStyles.TILE_SELECTED if is_sel else UIStyles.TILE_DEFAULT
     tile = ui.element("div").classes(
-        f"flex items-center justify-center gap-0.5 px-3 py-2 rounded border "
-        f"{border} {bg} select-none transition-colors text-xs {text}"
+        f"flex items-center justify-center gap-0.5 px-3 py-2 text-xs font-semibold "
+        f"{UIStyles.TILE_BASE} {state}"
     ).style("min-width:48px; min-height:34px")
     with tile:
         ui.label(f"{val}{suffix}")
@@ -38,8 +37,12 @@ def _event_value(e):
 
 # ── Step entry-point ──────────────────────────────────────────────────────────
 
-def render_step2(form: dict) -> None:  # noqa: C901
-    """Dispatch to physical or virtual hardware renderer based on form state."""
+def render_step2(form: dict, on_change=lambda: None) -> None:  # noqa: C901
+    """Dispatch to physical or virtual hardware renderer based on form state.
+
+    ``on_change`` is invoked after every hardware mutation so the side-panel rule
+    validation re-evaluates live (not only on step navigation / save).
+    """
     stype = form.get("server_type", "physical")
     env_id = form.get("environment_id") or ""
     profile_id = svc.catalog.environments().get_profile_id(env_id) if env_id else "edc"
@@ -53,53 +56,178 @@ def render_step2(form: dict) -> None:  # noqa: C901
     multi_storage: bool = profiles_cat.multi_storage_allowed(profile_id)
     socket_options: list[int] = profiles_cat.get_socket_options(profile_id)
     vcpu_tiles: list[int] = profiles_cat.get_vcpu_tiles(profile_id)
-    disk_count_options: list[int] = profiles_cat.get_disk_count_options(profile_id)
     ram_manual_max: int = profiles_cat.get_ram_manual_max(profile_id)
-    vm_disk_size_steps: list[int] = profiles_cat.get_vm_disk_size_steps(profile_id)
     storage_manual_max: int = profiles_cat.get_storage_manual_max(profile_id)
 
     cpu_allowed = products_cat.get_allowed_ids(product_id, "cpu") if product_id else None
     storage_allowed = products_cat.get_allowed_ids(product_id, "storage") if product_id else None
-    net_allowed = products_cat.get_allowed_ids(product_id, "network") if product_id else None
 
-    ui.label("Hardware Profile").classes("text-base font-semibold text-zinc-200")
+    ui.label("Hardware Profile").classes(UIStyles.TITLE_H3)
     if product_id:
         prod = products_cat.get(product_id)
-        ui.label(f"Product: {(prod or {}).get('label', product_id)} \u00b7 {stype}") \
-            .classes("text-xs text-zinc-400")
+        ui.label(f"Product: {(prod or {}).get('label', product_id)} · {stype}") \
+            .classes(UIStyles.TEXT_MUTED)
     else:
-        ui.label(f"No product selected \u00b7 {stype}").classes("text-xs text-zinc-400")
-    ui.separator().classes("border-zinc-800")
+        ui.label(f"No product selected · {stype}").classes(UIStyles.TEXT_MUTED)
+    ui.separator().classes("bg-slate-200 dark:bg-white/10")
 
     if stype == "physical":
-        _render_physical_hw(form, hw, cpu_allowed, storage_allowed, net_allowed,
+        _render_physical_hw(form, hw, cpu_allowed, storage_allowed,
                             ram_steps, multi_storage, socket_options,
-                            disk_count_options, ram_manual_max, storage_manual_max)
+                            ram_manual_max, storage_manual_max, on_change)
     else:
         _render_virtual_hw(form, hw, storage_allowed, ram_steps, multi_storage,
-                           vcpu_tiles, profile_id,
-                           disk_count_options, ram_manual_max,
-                           vm_disk_size_steps, storage_manual_max)
+                           vcpu_tiles, profile_id, ram_manual_max,
+                           storage_manual_max, on_change)
+
+
+# ── Unified storage section ───────────────────────────────────────────────────
+
+def _render_storage(  # noqa: C901
+    form: dict, storage_items, multi_storage: bool, on_change, storage_manual_max: int
+) -> None:
+    """Storage is ordered as a PRODUCT in an amount (GB) per line — no disk sizes.
+
+    multi_storage=True  (EDC): several products, each line picks its own product
+                               (product + mount + amount GB).
+    multi_storage=False (FCE): exactly one product, split into one or more
+                               partitions / drive letters (mount + amount GB);
+                               Windows is capped at 4 (also enforced by the rule).
+    """
+    with ui.card().classes(UIStyles.CARD_COMPACT + " w-full gap-3"):
+        if multi_storage:
+            ui.label("Storage — multiple products allowed") \
+                .classes(UIStyles.LABEL_HEADING)
+        else:
+            ui.label("Storage — one product per server") \
+                .classes(UIStyles.LABEL_HEADING)
+
+        if not storage_items:
+            ui.label("No storage products available for this selection.") \
+                .classes(UIStyles.TEXT_HINT + " italic")
+            return
+
+        is_win = (form.get("os_type") or "").lower() == "windows" \
+            or (form.get("os_family_id") or "").upper() == "WIN"
+        storage_disks: list[dict] = form.setdefault("storage_disks", [])
+        body = ui.column().classes("w-full gap-3")
+
+        def _shared_product() -> str:
+            for e in storage_disks:
+                if e.get("disk_id"):
+                    return e["disk_id"]
+            return storage_items[0]["id"]
+
+        def _commit_amount(idx: int, el) -> None:
+            # Read the element's own value — blur/enter events do not carry it.
+            try:
+                v = int(el.value or 0)
+            except (TypeError, ValueError):
+                return
+            if v > 0:
+                storage_disks[idx] = {**storage_disks[idx], "size_gb": v}
+                on_change()
+
+        def _product_tile(sp: dict, is_sel: bool, on_pick) -> None:
+            state = UIStyles.TILE_SELECTED if is_sel else UIStyles.TILE_DEFAULT
+            tile = ui.element("div").classes(
+                f"flex flex-col items-start gap-0.5 px-3 py-2 {UIStyles.TILE_BASE} {state}"
+            ).style("min-width:150px").tooltip(sp.get("description", ""))
+            with tile:
+                ui.label(sp.get("label", sp["id"])).classes("text-xs font-bold leading-tight")
+                if sp.get("type"):
+                    ui.label(sp["type"]).classes("text-[10px] opacity-70")
+            if not is_sel:
+                tile.on("click", lambda _: on_pick())
+
+        def _refresh() -> None:
+            body.clear()
+            with body:
+                # FCE single-product: choose the product once for all partitions.
+                if not multi_storage:
+                    cur = _shared_product()
+                    ui.label("Storage Product").classes(UIStyles.LABEL_MINI)
+                    with ui.row().classes("gap-2 flex-wrap"):
+                        for sp in storage_items:
+                            def _pick(_sid=sp["id"]) -> None:
+                                if storage_disks:
+                                    for i in range(len(storage_disks)):
+                                        storage_disks[i] = {**storage_disks[i], "disk_id": _sid}
+                                else:
+                                    storage_disks.append({"disk_id": _sid, "mount": "", "size_gb": 0})
+                                _refresh()
+                                on_change()
+                            _product_tile(sp, cur == sp["id"], _pick)
+
+                row_word = "Partition" if (not multi_storage and is_win) else "Volume"
+                for idx, entry in enumerate(storage_disks):
+                    with ui.card().classes(
+                        UIStyles.PANEL_SUBTLE + " w-full p-3 gap-2 rounded-lg"
+                    ):
+                        with ui.row().classes("w-full items-center justify-between gap-2"):
+                            ui.label(f"{row_word} {idx + 1}").classes(UIStyles.LABEL_FIELD)
+                            ui.button(icon="delete", on_click=lambda _, i=idx: (
+                                storage_disks.pop(i), _refresh(), on_change(),
+                            )).props("flat round dense size=xs color=red-4")
+
+                        # Per-line product picker for multi-product (EDC) profiles.
+                        if multi_storage:
+                            ui.label("Product").classes(UIStyles.LABEL_MINI + " mt-1")
+                            with ui.row().classes("gap-2 flex-wrap"):
+                                for sp in storage_items:
+                                    def _pick_line(_sid=sp["id"], i=idx) -> None:
+                                        storage_disks[i] = {**storage_disks[i], "disk_id": _sid}
+                                        _refresh()
+                                        on_change()
+                                    _product_tile(sp, entry.get("disk_id") == sp["id"], _pick_line)
+
+                        with ui.row().classes("w-full items-center gap-3"):
+                            ph = "C:\\ or D:\\" if is_win else "/ or /data"
+                            mount_label = "Drive letter" if is_win else "Mount point"
+                            ui.input(mount_label, value=entry.get("mount") or "") \
+                                .props(f'{UIStyles.INPUT_PROPS} placeholder="{ph}"') \
+                                .classes("flex-1") \
+                                .on("change", lambda e, i=idx: storage_disks.__setitem__(
+                                    i, {**storage_disks[i], "mount": _event_value(e)}))
+                            amt = ui.number(
+                                label="Menge", value=int(entry.get("size_gb") or 0) or None,
+                                min=1, max=storage_manual_max, step=10, format="%d",
+                            ).props(f"{UIStyles.INPUT_PROPS} suffix=GB").style("max-width:140px")
+                            amt.on("blur", lambda _, i=idx, el=amt: _commit_amount(i, el))
+                            amt.on("keydown.enter", lambda _, i=idx, el=amt: _commit_amount(i, el))
+
+                # Add line / partition — capped at 4 partitions for FCE Windows.
+                at_limit = (not multi_storage) and is_win and len(storage_disks) >= 4
+                if at_limit:
+                    ui.label("Maximum 4 partitions reached.").classes(UIStyles.STATUS_TEXT_WARNING)
+                else:
+                    add_word = "Add Partition" if (not multi_storage and is_win) else "Add Storage"
+
+                    def _add() -> None:
+                        did = _shared_product() if not multi_storage else storage_items[0]["id"]
+                        storage_disks.append({"disk_id": did, "mount": "", "size_gb": 0})
+                        _refresh()
+                        on_change()
+                    ui.button(icon="add", text=add_word, on_click=_add).props("flat dense size=sm")
+
+        _refresh()
 
 
 # ── Physical hardware ─────────────────────────────────────────────────────────
 
 def _render_physical_hw(  # noqa: C901
-    form: dict, hw, cpu_allowed, storage_allowed, net_allowed,
+    form: dict, hw, cpu_allowed, storage_allowed,
     ram_steps, multi_storage, socket_options,
-    disk_count_options: list[int] | None = None,
     ram_manual_max: int = 8192,
     storage_manual_max: int = 131072,
+    on_change=lambda: None,
 ) -> None:
-    if disk_count_options is None:
-        disk_count_options = [1, 2, 4, 6, 8]
     cpu_items = hw.get_cpu_options_for_product("physical", cpu_allowed)
     storage_items = hw.get_storage_options_for_product("physical", storage_allowed)
-    net_items = hw.get_network_options_for_product("physical", net_allowed)
 
     # ── CPU ──────────────────────────────────────────────────────────────
-    with ui.card().classes("w-full bg-zinc-900 border border-zinc-700 p-4 gap-3"):
-        ui.label("CPU Model *").classes("text-sm font-semibold text-zinc-300")
+    with ui.card().classes(UIStyles.CARD_COMPACT + " w-full gap-3"):
+        ui.label("CPU Model *").classes(UIStyles.LABEL_HEADING)
         cpu_refresh_area = ui.column().classes("w-full gap-2")
 
         def _refresh_cpu() -> None:
@@ -109,34 +237,34 @@ def _render_physical_hw(  # noqa: C901
                     for cpu in cpu_items:
                         cid = cpu["id"]
                         is_sel = form.get("cpu_id") == cid
-                        border = "border-primary" if is_sel else "border-zinc-700 hover:border-zinc-500 cursor-pointer"
-                        bg = "bg-primary/10" if is_sel else "bg-zinc-900 hover:bg-zinc-800"
-                        tc = "text-zinc-100" if is_sel else "text-zinc-300"
+                        state = UIStyles.TILE_SELECTED if is_sel else UIStyles.TILE_DEFAULT
                         tile = ui.element("div").classes(
-                            f"flex flex-col items-start gap-1 p-3 rounded border "
-                            f"{border} {bg} select-none transition-colors"
+                            f"flex flex-col items-start gap-1 p-3 {UIStyles.TILE_BASE} {state}"
                         ).style("min-width:160px")
                         with tile:
-                            ui.label(cpu.get("label", cid)).classes(f"text-xs font-bold {tc} leading-tight")
-                            with ui.row().classes("gap-2"):
+                            ui.label(cpu.get("label", cid)).classes("text-xs font-bold leading-tight")
+                            with ui.row().classes("gap-2 opacity-70"):
                                 cores = cpu.get("cores")
                                 if cores:
-                                    ui.label(f"{cores}C / {cpu.get('threads', cores*2)}T").classes("text-[10px] text-zinc-500")
+                                    ui.label(f"{cores}C / {cpu.get('threads', cores*2)}T").classes("text-[10px]")
                                 tdp = cpu.get("tdp_w")
                                 if tdp:
-                                    ui.label(f"{tdp} W").classes("text-[10px] text-zinc-500")
+                                    ui.label(f"{tdp} W").classes("text-[10px]")
                                 ghz = cpu.get("base_ghz")
                                 if ghz:
-                                    ui.label(f"{ghz} GHz").classes("text-[10px] text-zinc-500")
+                                    ui.label(f"{ghz} GHz").classes("text-[10px]")
+                            if cpu.get("server_model"):
+                                ui.label(cpu["server_model"]).classes("text-[10px] opacity-60 italic")
                         if not is_sel:
                             tile.on("click", lambda _, _cid=cid: (
                                 form.update({"cpu_id": _cid}),
                                 _refresh_cpu(),
                             ))
+            on_change()
 
         _refresh_cpu()
 
-        ui.label("Sockets").classes("text-xs font-semibold text-zinc-400 mt-1")
+        ui.label("Sockets").classes(UIStyles.LABEL_FIELD + " mt-1")
         socket_row = ui.row().classes("gap-2")
 
         def _refresh_sockets() -> None:
@@ -145,12 +273,13 @@ def _render_physical_hw(  # noqa: C901
                 for s in socket_options:
                     _num_tile(s, form.get("cpu_count", 1),
                               lambda v: (form.update({"cpu_count": v}), _refresh_sockets()))
+            on_change()
 
         _refresh_sockets()
 
     # ── RAM ───────────────────────────────────────────────────────────────
-    with ui.card().classes("w-full bg-zinc-900 border border-zinc-700 p-4 gap-3"):
-        ui.label("RAM (GB total) *").classes("text-sm font-semibold text-zinc-300")
+    with ui.card().classes(UIStyles.CARD_COMPACT + " w-full gap-3"):
+        ui.label("RAM (GB total) *").classes(UIStyles.LABEL_HEADING)
         ram_row = ui.row().classes("gap-2 flex-wrap items-center")
 
         def _refresh_ram_tiles() -> None:
@@ -158,162 +287,42 @@ def _render_physical_hw(  # noqa: C901
             with ram_row:
                 for gb in ram_steps:
                     _num_tile(gb, form.get("ram_gb"),
-                              lambda v: (form.update({"ram_gb": v}), _refresh_ram_tiles()))
+                              lambda v: (form.update({"ram_gb": v}),
+                                         _refresh_ram_tiles(), on_change()))
                 ui.element("div").classes("w-2")
                 manual = ui.number(
                     label="manual",
                     value=int(form.get("ram_gb") or 0) or None,
                     min=1, max=ram_manual_max, step=16, format="%d",
-                ).props("dense outlined dark suffix=GB").style("max-width:120px")
-                def _on_manual_phys_ram(e):
+                ).props(f"{UIStyles.INPUT_PROPS} suffix=GB").style("max-width:120px")
+                def _commit_manual_phys_ram():
                     try:
-                        v = int(_event_value(e) or 0)
-                    except Exception:
+                        v = int(manual.value or 0)
+                    except (TypeError, ValueError):
                         return
                     if v <= 0:
                         return
                     form["ram_gb"] = v
                     _refresh_ram_tiles()
-                manual.on("blur", _on_manual_phys_ram)
+                    on_change()
+                manual.on("blur", lambda _: _commit_manual_phys_ram())
+                manual.on("keydown.enter", lambda _: _commit_manual_phys_ram())
 
         _refresh_ram_tiles()
 
     # ── Storage ───────────────────────────────────────────────────────────
-    with ui.card().classes("w-full bg-zinc-900 border border-zinc-700 p-4 gap-3"):
-        if multi_storage:
-            ui.label("Storage (multiple product types allowed)") \
-                .classes("text-sm font-semibold text-zinc-300")
-        else:
-            ui.label("Storage (one product type per server)") \
-                .classes("text-sm font-semibold text-zinc-300")
-
-        storage_disks: list[dict] = form.setdefault("storage_disks", [])
-        disk_list = ui.column().classes("w-full gap-3")
-
-        def _refresh_storage() -> None:
-            disk_list.clear()
-            if not multi_storage:
-                used_types = {e.get("disk_id") for e in storage_disks if e.get("disk_id")}
-                locked_type = next(iter(used_types), None)
-            else:
-                locked_type = None
-
-            with disk_list:
-                for idx, entry in enumerate(storage_disks):
-                    with ui.card().classes(
-                        "w-full bg-zinc-800/60 border border-zinc-700/80 p-3 gap-2"
-                    ):
-                        with ui.row().classes("w-full items-center justify-between gap-2"):
-                            ui.input("Mount / Drive", value=entry.get("mount") or "") \
-                                .props("dense outlined dark placeholder=/data or E:\\") \
-                                .classes("flex-1") \
-                                .on("change", lambda e, i=idx: (
-                                    storage_disks.__setitem__(i, {**storage_disks[i], "mount": _event_value(e)}),
-                                ))
-                            ui.button(icon="delete",
-                                      on_click=lambda _, i=idx: (
-                                          storage_disks.pop(i), _refresh_storage()
-                                      )).props("flat round dense size=xs color=red-4")
-
-                        ui.label("Product").classes("text-[10px] text-zinc-500 font-semibold mt-1")
-                        with ui.row().classes("gap-2 flex-wrap"):
-                            for sp in storage_items:
-                                sid = sp["id"]
-                                is_sel = entry.get("disk_id") == sid
-                                is_locked = (not multi_storage) and locked_type and sid != locked_type
-                                sz = sp.get("size_gb") or 0
-                                sz_label = (f"{sz//1024:.0f} TB" if sz >= 1024 else f"{sz} GB") if sz else ""
-                                if is_locked:
-                                    border = "border-zinc-800 opacity-40 cursor-not-allowed"
-                                    bg = "bg-zinc-900/30"
-                                    tc = "text-zinc-600"
-                                elif is_sel:
-                                    border = "border-primary"
-                                    bg = "bg-primary/10"
-                                    tc = "text-zinc-100"
-                                else:
-                                    border = "border-zinc-700 hover:border-zinc-500 cursor-pointer"
-                                    bg = "bg-zinc-900 hover:bg-zinc-800"
-                                    tc = "text-zinc-300"
-                                tile = ui.element("div").classes(
-                                    f"flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 "
-                                    f"rounded border {border} {bg} select-none transition-colors"
-                                ).style("min-width:80px")
-                                with tile:
-                                    ui.label(sp.get("type", "")).classes("text-[10px] text-zinc-500")
-                                    ui.label(sz_label).classes(f"text-xs font-bold {tc}")
-                                if not is_locked and not is_sel:
-                                    tile.on("click", lambda _, _sid=sid, i=idx: (
-                                        storage_disks.__setitem__(i, {**storage_disks[i], "disk_id": _sid}),
-                                        _refresh_storage(),
-                                    ))
-
-                        ui.label("Count").classes("text-[10px] text-zinc-500 font-semibold mt-1")
-                        with ui.row().classes("gap-2"):
-                            for cnt in disk_count_options:
-                                _num_tile(cnt, entry.get("count", 1),
-                                          lambda v, i=idx: (
-                                              storage_disks.__setitem__(i, {**storage_disks[i], "count": v}),
-                                              _refresh_storage(),
-                                          ))
-
-        _refresh_storage()
-
-        def _add_storage() -> None:
-            first_id = storage_items[0]["id"] if storage_items else ""
-            storage_disks.append({"mount": "", "disk_id": first_id, "count": 1})
-            form["storage_disks"] = storage_disks
-            _refresh_storage()
-
-        ui.button(icon="add", text="Add Storage", on_click=_add_storage) \
-            .props("flat dense size=sm")
-
-    # ── Network ───────────────────────────────────────────────────────────
-    with ui.card().classes("w-full bg-zinc-900 border border-zinc-700 p-4 gap-3"):
-        ui.label("Network Card *").classes("text-sm font-semibold text-zinc-300")
-        net_refresh_area = ui.row().classes("w-full gap-3 flex-wrap")
-
-        def _refresh_net() -> None:
-            net_refresh_area.clear()
-            with net_refresh_area:
-                for nic in net_items:
-                    nid = nic["id"]
-                    is_sel = form.get("network_id") == nid
-                    border = "border-primary" if is_sel else "border-zinc-700 hover:border-zinc-500 cursor-pointer"
-                    bg = "bg-primary/10" if is_sel else "bg-zinc-900 hover:bg-zinc-800"
-                    tc = "text-zinc-100" if is_sel else "text-zinc-300"
-                    spd = nic.get("speed_gbps")
-                    tile = ui.element("div").classes(
-                        f"flex flex-col items-center justify-center gap-1 p-3 rounded border "
-                        f"{border} {bg} select-none transition-colors"
-                    ).style("min-width:90px; min-height:60px")
-                    with tile:
-                        ui.label(nic.get("label", nid)).classes(f"text-xs font-bold {tc} text-center leading-tight")
-                        if spd:
-                            ui.label(f"{spd} GbE").classes("text-[10px] text-zinc-500")
-                    if not is_sel:
-                        tile.on("click", lambda _, _nid=nid: (
-                            form.update({"network_id": _nid}),
-                            _refresh_net(),
-                        ))
-
-        _refresh_net()
+    _render_storage(form, storage_items, multi_storage, on_change, storage_manual_max)
 
 
 # ── Virtual hardware ──────────────────────────────────────────────────────────
 
 def _render_virtual_hw(  # noqa: C901
     form: dict, hw, storage_allowed, ram_steps, multi_storage, vcpu_tiles, profile_id,
-    disk_count_options: list[int] | None = None,
     ram_manual_max: int = 8192,
-    vm_disk_size_steps: list[int] | None = None,
     storage_manual_max: int = 131072,
+    on_change=lambda: None,
 ) -> None:
-    if disk_count_options is None:
-        disk_count_options = [1, 2, 4, 6, 8]
-    if vm_disk_size_steps is None:
-        vm_disk_size_steps = [10, 20, 50, 100, 200, 500, 1000, 2000]
-    """Virtual hardware UI: vCPU/RAM live matrix tiles + per-volume storage."""
+    """Virtual hardware UI: vCPU/RAM live matrix tiles + per-product storage."""
     storage_items = hw.get_storage_options_for_product("vm", storage_allowed)
     products_cat = svc.catalog.products()
     product_id = form.get("product_id") or None
@@ -356,23 +365,17 @@ def _render_virtual_hw(  # noqa: C901
             return "special"
         return "disabled"
 
-    def _state_classes(state: str) -> tuple[str, str, str]:
-        if state == "selected":
-            return ("border-primary", "bg-primary/10", "text-primary font-bold")
-        if state == "disabled":
-            return ("border-zinc-800 opacity-40 cursor-not-allowed",
-                    "bg-zinc-900/30", "text-zinc-600")
-        if state == "special":
-            return ("border-amber-500/60 hover:border-amber-400 cursor-pointer",
-                    "bg-amber-900/20", "text-amber-300 font-semibold")
-        return ("border-zinc-700 hover:border-zinc-500 cursor-pointer",
-                "bg-zinc-900 hover:bg-zinc-800", "text-zinc-300 font-semibold")
+    def _state_classes(state: str) -> str:
+        return {
+            "selected": UIStyles.TILE_SELECTED,
+            "disabled": UIStyles.TILE_DISABLED,
+            "special": UIStyles.TILE_WARNING,
+        }.get(state, UIStyles.TILE_DEFAULT)
 
     def _state_tile(label: str, state: str, tooltip: str, on_click) -> None:
-        bd, bg, txt = _state_classes(state)
         tile = ui.element("div").classes(
-            f"flex items-center justify-center px-3 py-2 rounded border "
-            f"{bd} {bg} select-none transition-colors text-xs {txt}"
+            f"flex items-center justify-center px-3 py-2 text-xs font-semibold "
+            f"{UIStyles.TILE_BASE} {_state_classes(state)}"
         ).style("min-width:48px; min-height:34px")
         if tooltip:
             tile.tooltip(tooltip)
@@ -384,16 +387,16 @@ def _render_virtual_hw(  # noqa: C901
     # ── Header badges ──────────────────────────────────────────────────────
     if has_matrix:
         with ui.row().classes("items-center gap-2 flex-wrap"):
-            ui.icon("info", size="14px").classes("text-blue-400")
+            ui.icon("info", size="14px").classes(UIStyles.ICON_INFO)
             if os_family:
-                ui.label(f"Matrix active for OS '{os_family}'").classes("text-[11px] text-blue-300")
+                ui.label(f"Matrix active for OS '{os_family}'").classes(UIStyles.TEXT_HINT)
             else:
                 ui.label("Select an OS (step 1) to activate the RAM matrix.") \
-                    .classes("text-[11px] text-amber-300")
+                    .classes(UIStyles.STATUS_TEXT_WARNING)
             if special_max:
-                ui.label(f"· Special sizing up to {special_max} GB").classes("text-[11px] text-zinc-500")
+                ui.label(f"· Special sizing up to {special_max} GB").classes(UIStyles.STATUS_TEXT_NEUTRAL)
             if ram_step_for_product > 1:
-                ui.label(f"· RAM step {ram_step_for_product} GB").classes("text-[11px] text-zinc-500")
+                ui.label(f"· RAM step {ram_step_for_product} GB").classes(UIStyles.STATUS_TEXT_NEUTRAL)
 
     # ── vCPU + RAM: single container re-rendered together on any change ────
     hw_tiles = ui.column().classes("w-full gap-4")
@@ -402,8 +405,8 @@ def _render_virtual_hw(  # noqa: C901
         hw_tiles.clear()
         with hw_tiles:
             # vCPU card
-            with ui.card().classes("w-full bg-zinc-900 border border-zinc-700 p-4 gap-3"):
-                ui.label("vCPU Count *").classes("text-sm font-semibold text-zinc-300")
+            with ui.card().classes(UIStyles.CARD_COMPACT + " w-full gap-3"):
+                ui.label("vCPU Count *").classes(UIStyles.LABEL_HEADING)
                 with ui.row().classes("gap-2 flex-wrap items-center"):
                     for v in vcpu_tile_values:
                         tip = ""
@@ -416,7 +419,7 @@ def _render_virtual_hw(  # noqa: C901
                             str(v), _vcpu_state(v), tip,
                             lambda _t=target: (
                                 form.update({"vcpu_count": _t}),
-                                _refresh_hw_tiles(),
+                                _refresh_hw_tiles(), on_change(),
                             ),
                         )
                     ui.element("div").classes("w-2")
@@ -424,21 +427,23 @@ def _render_virtual_hw(  # noqa: C901
                         label="vCPU",
                         value=int(form.get("vcpu_count") or 0) or None,
                         min=1, max=512, step=1, format="%d",
-                    ).props("dense outlined dark").style("max-width:90px")
-                    def _on_vcpu(e):
+                    ).props(UIStyles.INPUT_PROPS).style("max-width:90px")
+                    def _commit_vcpu(_v=manual_v):
                         try:
-                            v = int(_event_value(e) or 0)
-                        except Exception:
+                            v = int(_v.value or 0)
+                        except (TypeError, ValueError):
                             return
                         if v > 0:
                             form["vcpu_count"] = v
                             _refresh_hw_tiles()
-                    manual_v.on("blur", _on_vcpu)
+                            on_change()
+                    manual_v.on("blur", lambda _: _commit_vcpu())
+                    manual_v.on("keydown.enter", lambda _: _commit_vcpu())
 
             # RAM card
-            with ui.card().classes("w-full bg-zinc-900 border border-zinc-700 p-4 gap-3"):
-                ui.label("RAM (GB) *").classes("text-sm font-semibold text-zinc-300")
-                ram_hint = ui.label("").classes("text-[10px] text-zinc-500")
+            with ui.card().classes(UIStyles.CARD_COMPACT + " w-full gap-3"):
+                ui.label("RAM (GB) *").classes(UIStyles.LABEL_HEADING)
+                ram_hint = ui.label("").classes(UIStyles.STATUS_TEXT_NEUTRAL)
                 with ui.row().classes("gap-2 flex-wrap items-center"):
                     tile_gblist = sorted(set(
                         list(ram_steps) + ([special_max] if special_max else [])
@@ -463,7 +468,7 @@ def _render_virtual_hw(  # noqa: C901
                             lbl, state, tip,
                             lambda _t=target_r: (
                                 form.update({"ram_gb": _t}),
-                                _refresh_hw_tiles(),
+                                _refresh_hw_tiles(), on_change(),
                             ),
                         )
                     ui.element("div").classes("w-2")
@@ -473,24 +478,28 @@ def _render_virtual_hw(  # noqa: C901
                         min=1, max=ram_manual_max,
                         step=ram_step_for_product or 1,
                         format="%d",
-                    ).props("dense outlined dark suffix=GB").style("max-width:120px")
-                    def _on_ram(e):
+                    ).props(f"{UIStyles.INPUT_PROPS} suffix=GB").style("max-width:120px")
+                    def _commit_ram(_v=manual_r):
                         try:
-                            v = int(_event_value(e) or 0)
-                        except Exception:
+                            v = int(_v.value or 0)
+                        except (TypeError, ValueError):
                             return
                         if v > 0:
                             form["ram_gb"] = v
                             _refresh_hw_tiles()
-                    manual_r.on("blur", _on_ram)
+                            on_change()
+                    manual_r.on("blur", lambda _: _commit_ram())
+                    manual_r.on("keydown.enter", lambda _: _commit_ram())
 
                 if has_matrix and os_family and form.get("vcpu_count") and form.get("ram_gb"):
                     verdict = products_cat.evaluate_combo(
                         product_id, os_family,
                         int(form["vcpu_count"]), int(form["ram_gb"]),
                     )
-                    col = {"ok": "text-emerald-400", "special": "text-amber-400",
-                           "invalid": "text-red-400"}.get(verdict["status"], "text-zinc-500")
+                    cls = {"ok": UIStyles.STATUS_TEXT_SUCCESS,
+                           "special": UIStyles.STATUS_TEXT_WARNING,
+                           "invalid": UIStyles.STATUS_TEXT_ERROR}.get(
+                        verdict["status"], UIStyles.STATUS_TEXT_NEUTRAL)
                     rng_txt = ""
                     if verdict["status"] == "ok" and verdict.get("ram_min") is not None:
                         rng_txt = f" (allowed {verdict['ram_min']}–{verdict['ram_max']} GB)"
@@ -498,156 +507,9 @@ def _render_virtual_hw(  # noqa: C901
                         ("✓ matches matrix" + rng_txt) if verdict["status"] == "ok"
                         else verdict["message"]
                     )
-                    ram_hint.classes(replace=f"text-[10px] {col}")
+                    ram_hint.classes(replace=cls)
 
     _refresh_hw_tiles()
 
-    # ── Storage volumes ────────────────────────────────────────────────────
-    with ui.card().classes("w-full bg-zinc-900 border border-zinc-700 p-4 gap-3"):
-        ui.label("Storage Volumes").classes("text-sm font-semibold text-zinc-300")
-        storage_disks: list[dict] = form.setdefault("storage_disks", [])
-        disk_list = ui.column().classes("w-full gap-3")
-        vm_size_steps = vm_disk_size_steps
-
-        def _vol_size_label(sz: int) -> str:
-            return (f"{sz // 1000} TB" if sz >= 1000 and sz % 1000 == 0 else f"{sz} GB")
-
-        def _make_size_refresh(v_idx: int, size_area):
-            """Returns a closure that refreshes ONLY the size tiles for one volume."""
-            def _do() -> None:
-                size_area.clear()
-                entry = storage_disks[v_idx]
-                with size_area:
-                    for sz in vm_size_steps:
-                        lbl = _vol_size_label(sz)
-                        is_sel = entry.get("size_gb") == sz
-                        bd = ("border-primary" if is_sel
-                              else "border-zinc-700 hover:border-zinc-500 cursor-pointer")
-                        bgg = "bg-primary/10" if is_sel else "bg-zinc-900 hover:bg-zinc-800"
-                        txc = "text-primary font-bold" if is_sel else "text-zinc-300 font-semibold"
-                        tile = ui.element("div").classes(
-                            f"flex items-center justify-center px-2 py-1.5 rounded border "
-                            f"{bd} {bgg} select-none transition-colors text-xs {txc}"
-                        ).style("min-width:52px")
-                        with tile:
-                            ui.label(lbl)
-                        if not is_sel:
-                            tile.on("click", lambda _, _sz=sz: (
-                                storage_disks.__setitem__(v_idx,
-                                    {**storage_disks[v_idx], "size_gb": _sz}),
-                                _do(),
-                            ))
-                    ui.element("div").classes("w-1")
-                    manual_s = ui.number(
-                        label="GB",
-                        value=int(entry.get("size_gb") or 0) or None,
-                        min=1, max=storage_manual_max, step=1, format="%d",
-                    ).props("dense outlined dark suffix=GB").style("max-width:110px")
-                    def _on_sz(e, _i=v_idx, _fn=_do):
-                        try:
-                            v = int(_event_value(e) or 0)
-                        except Exception:
-                            return
-                        if v > 0:
-                            storage_disks[_i]["size_gb"] = v
-                            _fn()
-                    manual_s.on("blur", _on_sz)
-            return _do
-
-        def _refresh_vm_storage() -> None:
-            disk_list.clear()
-            with disk_list:
-                for idx, entry in enumerate(storage_disks):
-                    with ui.card().classes(
-                        "w-full bg-zinc-800/60 border border-zinc-700/80 p-3 gap-2"
-                    ):
-                        with ui.row().classes("w-full items-center justify-between"):
-                            ui.label(f"Volume {idx + 1}").classes(
-                                "text-xs font-semibold text-zinc-400"
-                            )
-                            ui.button(
-                                icon="delete",
-                                on_click=lambda _, i=idx: (
-                                    storage_disks.pop(i), _refresh_vm_storage()
-                                ),
-                            ).props("flat round dense size=xs color=red-4")
-
-                        if len(storage_items) > 1:
-                            ui.label("Storage Product").classes(
-                                "text-[10px] text-zinc-500 font-semibold"
-                            )
-                            dt_area = ui.row().classes("gap-2 flex-wrap")
-
-                            def _make_dt_refresh(i, dta):
-                                def _dt():
-                                    dta.clear()
-                                    cur_dt = storage_disks[i].get("disk_id") or (
-                                        storage_items[0]["id"] if storage_items else ""
-                                    )
-                                    with dta:
-                                        for sp in storage_items:
-                                            sid = sp["id"]
-                                            is_s = cur_dt == sid
-                                            bd = ("border-primary" if is_s
-                                                  else "border-zinc-700 hover:border-zinc-500 cursor-pointer")
-                                            bgg = "bg-primary/10" if is_s else "bg-zinc-900 hover:bg-zinc-800"
-                                            tc = "text-zinc-100 font-bold" if is_s else "text-zinc-300"
-                                            tile = ui.element("div").classes(
-                                                f"flex flex-col items-center justify-center gap-0.5 "
-                                                f"px-3 py-2 rounded border {bd} {bgg} "
-                                                f"select-none transition-colors"
-                                            ).style("min-width:80px")
-                                            with tile:
-                                                ui.label(sp.get("label", sid)).classes(
-                                                    f"text-xs {tc} leading-tight"
-                                                )
-                                            if not is_s:
-                                                tile.on("click", lambda _, _sid=sid, _i=i, _fn=_dt: (
-                                                    storage_disks.__setitem__(
-                                                        _i, {**storage_disks[_i], "disk_id": _sid}
-                                                    ),
-                                                    _fn(),
-                                                ))
-                                return _dt
-
-                            _make_dt_refresh(idx, dt_area)()
-                        else:
-                            if storage_items:
-                                sp = storage_items[0]
-                                if entry.get("disk_id") != sp["id"]:
-                                    storage_disks[idx]["disk_id"] = sp["id"]
-                                ui.label(sp.get("label", sp["id"])).classes(
-                                    "text-[10px] text-zinc-400"
-                                )
-
-                        is_win = (form.get("os_family_id") or "").upper() == "WIN"
-                        ph = "e.g. D:\\ or E:\\" if is_win else "e.g. / or /data"
-                        ui.label("Partition" if is_win else "Mount Point").classes(
-                            "text-[10px] text-zinc-500 font-semibold mt-1"
-                        )
-                        ui.input(
-                            value=entry.get("mount") or "",
-                            on_change=lambda e, i=idx: storage_disks.__setitem__(
-                                i, {**storage_disks[i], "mount": _event_value(e)}
-                            ),
-                        ).props(f'dense outlined dark placeholder="{ph}"').classes("w-full")
-
-                        ui.label("Size").classes(
-                            "text-[10px] text-zinc-500 font-semibold mt-1"
-                        )
-                        size_area = ui.row().classes("gap-2 flex-wrap items-center")
-                        _make_size_refresh(idx, size_area)()
-
-        _refresh_vm_storage()
-
-        def _add_vm_volume() -> None:
-            cur_disk = next(
-                (e.get("disk_id") for e in storage_disks if e.get("disk_id")),
-                storage_items[0]["id"] if storage_items else "",
-            )
-            storage_disks.append({"mount": "", "disk_id": cur_disk, "size_gb": 50})
-            form["storage_disks"] = storage_disks
-            _refresh_vm_storage()
-
-        ui.button(icon="add", text="Add Volume", on_click=_add_vm_volume) \
-            .props("flat dense size=sm")
+    # ── Storage ────────────────────────────────────────────────────────────
+    _render_storage(form, storage_items, multi_storage, on_change, storage_manual_max)

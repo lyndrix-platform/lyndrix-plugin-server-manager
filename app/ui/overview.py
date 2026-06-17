@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from nicegui import ui
 
+from core.api import UIStyles
+
 from ..controller.service import server_manager_service as svc
 
 _TYPE_ICON = {
@@ -33,7 +35,7 @@ def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
     # ── Header bar ───────────────────────────────────────────────────────────
     with ui.row().classes("w-full items-center gap-3 flex-wrap"):
         ui.input(placeholder="Search servers…") \
-            .props("dense outlined dark clearable") \
+            .props(f"{UIStyles.INPUT_PROPS} clearable") \
             .classes("flex-1 min-w-48") \
             .bind_value(state, "search")
 
@@ -44,29 +46,28 @@ def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
         ui.select(
             options={e["value"]: e["label"] for e in envs},
             value="",
-        ).props("dense outlined dark").classes("w-44") \
+        ).props(UIStyles.INPUT_PROPS).classes("w-44") \
             .bind_value(state, "env_filter")
 
         ui.select(
             options=status_labels,
             value="",
-        ).props("dense outlined dark").classes("w-36") \
+        ).props(UIStyles.INPUT_PROPS).classes("w-36") \
             .bind_value(state, "status_filter")
 
-        types = [""] + [t["id"] for t in catalog.hardware().get_server_types()]
         type_labels = {"": "All Types"} | {
             t["id"]: t["label"] for t in catalog.hardware().get_server_types()
         }
         ui.select(
             options=type_labels, value="",
-        ).props("dense outlined dark").classes("w-36") \
+        ).props(UIStyles.INPUT_PROPS).classes("w-36") \
             .bind_value(state, "type_filter")
 
         ui.button(icon="add", text="Add Server",
                   on_click=lambda: open_configurator_fn(None)) \
             .props("color=primary")
 
-    ui.separator().classes("my-3 border-zinc-700")
+    ui.separator().classes("my-3 border-slate-200 dark:border-white/5")
 
     # ── Server cards list ─────────────────────────────────────────────────────
     list_area = ui.column().classes("w-full gap-3")
@@ -93,18 +94,12 @@ def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
 
             disks = profile.get("storage_disks") or []
             disk_total = sum(
-                (hw.get_item(d.get("disk_id")) or {}).get("size_gb", 0) * d.get("count", 1)
+                int(d.get("size_gb") or 0) or (hw.get_item(d.get("disk_id")) or {}).get("size_gb", 0)
                 for d in disks
             )
             if disk_total:
                 tb = disk_total / 1024
                 parts.append(f"{tb:.1f} TB storage" if tb >= 1 else f"{disk_total} GB storage")
-
-            net_id = profile.get("network_id")
-            if net_id:
-                net = hw.get_item(net_id)
-                if net:
-                    parts.append(net.get("label", net_id))
 
         else:  # vm / container
             vcpu = profile.get("vcpu_count")
@@ -113,9 +108,12 @@ def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
             ram_gb = profile.get("ram_gb")
             if ram_gb:
                 parts.append(f"{ram_gb} GB RAM")
-            disk_gb = profile.get("storage_gb")
-            if disk_gb:
-                parts.append(f"{disk_gb} GB disk")
+            disks = profile.get("storage_disks") or []
+            disk_total = sum(int(d.get("size_gb") or 0) for d in disks) \
+                or int(profile.get("storage_gb") or 0)
+            if disk_total:
+                tb = disk_total / 1024
+                parts.append(f"{tb:.1f} TB disk" if tb >= 1 else f"{disk_total} GB disk")
 
         return " · ".join(parts) if parts else "No hardware configured"
 
@@ -123,20 +121,20 @@ def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
         list_area.clear()
         if not svc.is_ready:
             with list_area:
-                with ui.column().classes("w-full items-center py-12 gap-2 text-zinc-500"):
-                    ui.icon("hourglass_empty", size="48px")
-                    ui.label("Waiting for database…").classes("text-lg")
+                with ui.column().classes("w-full items-center py-12 gap-2"):
+                    ui.icon("hourglass_empty", size="48px").classes(UIStyles.ICON_MUTED)
+                    ui.label("Waiting for database…").classes(UIStyles.TITLE_H3)
                     ui.label("The server list will appear once the DB connection is ready.") \
-                        .classes("text-sm")
+                        .classes(UIStyles.TEXT_MUTED)
             return
         try:
             servers = svc.get_all_servers()
         except Exception as exc:
             with list_area:
-                with ui.column().classes("w-full items-center py-12 gap-2 text-red-400"):
-                    ui.icon("error", size="48px")
-                    ui.label("Failed to load servers").classes("text-lg")
-                    ui.label(str(exc)).classes("text-xs font-mono")
+                with ui.column().classes("w-full items-center py-12 gap-2"):
+                    ui.icon("error", size="48px").classes("text-red-400")
+                    ui.label("Failed to load servers").classes(UIStyles.TITLE_H3)
+                    ui.label(str(exc)).classes(UIStyles.STATUS_TEXT_ERROR + " font-mono")
             return
         q = state["search"].lower()
 
@@ -152,12 +150,12 @@ def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
 
         with list_area:
             if not filtered:
-                with ui.column().classes("w-full items-center py-12 gap-2 text-zinc-500"):
-                    ui.icon("dns", size="48px")
-                    ui.label("No servers found").classes("text-lg")
+                with ui.column().classes("w-full items-center py-12 gap-2"):
+                    ui.icon("dns", size="48px").classes(UIStyles.ICON_MUTED)
+                    ui.label("No servers found").classes(UIStyles.TITLE_H3)
                     if not servers:
                         ui.label("Click 'Add Server' to register your first server.") \
-                            .classes("text-sm")
+                            .classes(UIStyles.TEXT_MUTED)
                 return
 
             for server in filtered:
@@ -169,44 +167,44 @@ def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
                 hw_summary = _hw_summary(server.get("hardware_profile") or {}, stype)
 
                 with ui.card().classes(
-                    "w-full p-0 overflow-hidden bg-zinc-900 border border-zinc-700 "
-                    "hover:border-zinc-500 transition-colors"
+                    UIStyles.CARD_BASE + " w-full p-0 overflow-hidden "
+                    "hover:border-slate-300 dark:hover:border-white/10 transition-colors"
                 ):
-                    # Accent strip
-                    ui.element("div").classes(
-                        f"h-0.5 w-full bg-{env_color}-500"
-                    )
+                    # Accent strip (env colour)
+                    ui.element("div").classes(f"h-0.5 w-full bg-{env_color}-500")
                     with ui.row().classes("w-full items-center gap-4 px-4 py-3"):
-                        # Type icon
                         ui.icon(
                             _TYPE_ICON.get(stype, "dns"), size="28px"
-                        ).classes("text-slate-400 shrink-0")
+                        ).classes(UIStyles.ICON_MUTED + " shrink-0")
 
-                        # Name / hostname
                         with ui.column().classes("gap-0 flex-1 min-w-0"):
                             ui.label(server["name"]).classes(
-                                "text-sm font-semibold text-zinc-100 truncate"
+                                UIStyles.TITLE_H3 + " truncate"
                             )
                             hostname = server.get("hostname") or "—"
                             ui.label(hostname).classes(
-                                "text-xs text-zinc-400 font-mono truncate"
+                                UIStyles.TEXT_MUTED + " font-mono truncate"
                             )
 
-                        # HW summary
                         ui.label(hw_summary).classes(
-                            "text-xs text-zinc-400 hidden md:block flex-1 truncate"
+                            UIStyles.TEXT_MUTED + " hidden md:block flex-1 truncate"
                         )
 
                         # Environment badge
-                        ui.badge(env_label, color=env_color).classes("text-xs shrink-0")
+                        ui.label(env_label).classes(
+                            UIStyles.BADGE_NEUTRAL + f" shrink-0 !text-{env_color}-300"
+                        )
 
                         # Status badge
-                        ui.badge(
-                            status_labels.get(status, status.capitalize()),
-                            color=status_colors.get(status, "grey"),
-                        ).classes("text-xs shrink-0")
+                        status_display = status_labels.get(status, status.capitalize())
+                        status_color = status_colors.get(status, "grey")
+                        ui.label(status_display).classes(
+                            f"text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 "
+                            f"rounded-full shrink-0 "
+                            f"bg-{status_color}-500/15 text-{status_color}-300 "
+                            f"border border-{status_color}-500/30"
+                        )
 
-                        # Actions
                         sid = server["id"]
                         ui.button(icon="edit", on_click=lambda _, s=server: open_configurator_fn(s)) \
                             .props("flat round dense size=sm color=blue-grey")
@@ -216,10 +214,10 @@ def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
                         ).props("flat round dense size=sm color=red-4")
 
     def _confirm_delete(server_id: int, name: str, after_fn) -> None:
-        with ui.dialog() as dlg, ui.card().classes("p-6 gap-4 bg-zinc-900 border border-zinc-700"):
-            ui.label(f"Delete '{name}'?").classes("text-base font-semibold text-zinc-100")
-            ui.label("This will permanently remove the server record and emit a deletion event.")  \
-                .classes("text-sm text-zinc-400")
+        with ui.dialog() as dlg, ui.card().classes(UIStyles.MODAL_CONTAINER + " p-6 gap-4"):
+            ui.label(f"Delete '{name}'?").classes(UIStyles.TITLE_H3)
+            ui.label("This will permanently remove the server record and emit a deletion event.") \
+                .classes(UIStyles.TEXT_MUTED)
             with ui.row().classes("gap-2 justify-end w-full pt-2"):
                 ui.button("Cancel", on_click=dlg.close).props("flat")
                 ui.button("Delete", color="negative", on_click=lambda: (
@@ -230,17 +228,8 @@ def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
                 ))
         dlg.open()
 
-    # Wire up reactive refresh on filter changes
     for key in ("search", "env_filter", "status_filter", "type_filter"):
         ui.timer(0.4, refresh, once=True)
 
-    state_ref = state
-
-    def _on_change(*_):
-        refresh()
-
-    # Initial render
     refresh()
-
-    # Expose refresh for external callers (e.g. after save in configurator)
     return refresh

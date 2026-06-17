@@ -44,7 +44,6 @@ def _unpack_profile(profile: dict) -> dict:
         "cpu_count": profile.get("cpu_count") or 1,
         "ram_gb": ram_gb,
         "storage_disks": storage_disks,
-        "network_id": profile.get("network_id") or "",
         "vcpu_count": profile.get("vcpu_count") or None,
     }
 
@@ -61,14 +60,12 @@ def _build_profile(form: dict) -> dict:
             "cpu_count": int(form.get("cpu_count") or 1),
             "ram_gb": int(form.get("ram_gb") or 0) or None,
             "storage_disks": list(form.get("storage_disks") or []),
-            "network_id": form.get("network_id") or None,
         }
     return {
         **base,
         "vcpu_count": int(form.get("vcpu_count") or 0) or None,
         "ram_gb": int(form.get("ram_gb") or 0) or None,
         "storage_disks": list(form.get("storage_disks") or []),
-        "network_id": form.get("network_id") or None,
     }
 
 

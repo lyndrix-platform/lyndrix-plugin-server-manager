@@ -11,7 +11,6 @@ server_products:
     allowed_cpu_ids: [virtual-vcpu]
     allowed_ram_ids: [virtual-ram]
     allowed_storage_ids: [virtual-disk, virtual-disk-mirrored]
-    allowed_network_ids: [virtual-nic]
     service_classes:
       - id: SK1
         label: SK1
@@ -20,6 +19,7 @@ server_products:
         ha: false
     os_variants:
       - id: WIN
+        os_type: windows
         label: Windows Server
         icon: desktop_windows
         os_versions:

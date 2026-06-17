@@ -3,30 +3,30 @@ from __future__ import annotations
 
 from nicegui import ui
 
+from core.api import UIStyles
+
 from ..controller.service import server_manager_service as svc
 
-_STATUS_COLOR = {
-    "active": "text-emerald-400",
-    "ordered": "text-amber-400",
-    "provisioning": "text-blue-400",
-    "decommissioned": "text-zinc-500",
+_STATUS_STYLE = {
+    "active":        UIStyles.STATUS_TEXT_SUCCESS,
+    "ordered":       UIStyles.STATUS_TEXT_WARNING,
+    "provisioning":  "text-xs text-cyan-400",
+    "decommissioned": UIStyles.STATUS_TEXT_NEUTRAL,
 }
 
 
 def render_dashboard_widget(ctx):
-    with ui.card().classes(
-        "w-full p-4 gap-3 bg-zinc-900 border border-zinc-700"
-    ):
+    with ui.card().classes(UIStyles.CARD_BASE + " w-full p-4 gap-3"):
         with ui.row().classes("w-full items-center justify-between"):
             with ui.row().classes("items-center gap-2"):
-                ui.icon("dns", size="20px").classes("text-primary")
-                ui.label("Server Manager").classes("text-sm font-bold text-zinc-200")
+                ui.icon("dns", size="20px").classes(UIStyles.ICON_PRIMARY)
+                ui.label("Server Manager").classes(UIStyles.TITLE_H3)
             ui.button(
                 icon="open_in_new",
                 on_click=lambda: ui.navigate.to("/server-manager"),
             ).props("flat round dense size=xs color=blue-grey")
 
-        stats_label = ui.label("Loading…").classes("text-xs text-zinc-400")
+        stats_label = ui.label("Loading…").classes(UIStyles.TEXT_MUTED)
         status_row = ui.row().classes("w-full gap-2 flex-wrap")
 
         def refresh():
@@ -40,8 +40,8 @@ def render_dashboard_widget(ctx):
                 status_row.clear()
                 with status_row:
                     for status, count in sorted(stats.get("by_status", {}).items()):
-                        color = _STATUS_COLOR.get(status, "text-zinc-400")
-                        with ui.row().classes(f"items-center gap-1 {color}"):
+                        cls = _STATUS_STYLE.get(status, UIStyles.STATUS_TEXT_NEUTRAL)
+                        with ui.row().classes(f"items-center gap-1 {cls}"):
                             ui.label(f"{count}").classes("text-xs font-bold font-mono")
                             ui.label(status.capitalize()).classes("text-xs")
             except Exception:

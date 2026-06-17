@@ -306,6 +306,22 @@ class ProductCatalog:
                 return v
         return None
 
+    def os_type_for_family(self, family_id: str) -> str | None:
+        """Resolve an OS family id (e.g. 'WIN', 'RHEL') to its global os_type token
+        (e.g. 'windows', 'linux', 'unix') as declared in products.yml.
+
+        Scans every product's os_variants for the first family match. Families carry
+        a consistent os_type across products, so the first hit is authoritative. The
+        returned token feeds the DB os_type column and `applies_to_os` rule filtering.
+        """
+        if not family_id:
+            return None
+        for product in self._products:
+            for fam in product.get("os_variants") or []:
+                if fam.get("id") == family_id:
+                    return fam.get("os_type")
+        return None
+
     def get_os_version(
         self, product_id: str, family_id: str, version_id: str
     ) -> dict | None:
@@ -670,23 +686,13 @@ class ConstraintEngine:
 
         if not rule.get("partitions_unlimited"):
             max_p = rule.get("max_partitions")
-            max_gb_at_max = rule.get("max_gb_per_partition_at_max_partitions")
-            # Partition count from storage_disks total-count for physical,
-            # not directly modeled for VMs — surfaced as advisory info only.
-            if max_p and server_type == "physical":
-                total_disks = sum(d.get("count", 1) for d in (profile.get("storage_disks") or []))
-                if total_disks > max_p:
+            # Each storage line item is one partition / drive letter.
+            if max_p:
+                partitions = len(profile.get("storage_disks") or [])
+                if partitions > max_p:
                     issues.append(self._issue(rule,
-                        f"OS allows max {max_p} partitions; {total_disks} disk(s) configured."))
-                elif total_disks == max_p and max_gb_at_max:
-                    # Each disk must stay ≤ max_gb_at_max
-                    for entry in (profile.get("storage_disks") or []):
-                        item = self._hw.get_item(entry.get("disk_id") or "")
-                        sz = (item or {}).get("size_gb") or 0
-                        if sz > max_gb_at_max:
-                            issues.append(self._issue(rule,
-                                f"With {max_p} partitions, each disk may not exceed "
-                                f"{max_gb_at_max} GB (found {sz} GB disk)."))
+                        f"OS allows max {max_p} partitions (drive letters); "
+                        f"{partitions} configured."))
         return issues
 
     # ── Product rule handlers ─────────────────────────────────────────────────
