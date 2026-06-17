@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from nicegui import ui
+from core.api import UIStyles
 
 from ..service import server_manager_service as svc
 from .helpers import _collect_form
@@ -9,7 +10,7 @@ from .helpers import _collect_form
 
 def render_step3(form: dict) -> None:
     """Render step 3: read-only summary of all configured values."""
-    ui.label("Review & Save").classes("text-base font-semibold text-zinc-200")
+    ui.label("Review & Save").classes(UIStyles.TITLE_H3)
     data = _collect_form(form)
     hw = svc.catalog.hardware()
     envs = svc.catalog.environments()
@@ -18,7 +19,7 @@ def render_step3(form: dict) -> None:
     profile = svc.catalog.profiles().get(profile_id) or {}
     prod = svc.catalog.products().get(data.get("product_id") or "") or {}
 
-    with ui.card().classes("w-full bg-zinc-900 border border-zinc-700 p-4 gap-2"):
+    with ui.card().classes(UIStyles.CARD_COMPACT + " w-full gap-2"):
         rows = [
             ("Name", data.get("name")),
             ("Hostname", data.get("hostname") or "—"),
@@ -61,8 +62,6 @@ def render_step3(form: dict) -> None:
             rows.append(("CPU", f"{hp.get('cpu_count', 1)}× {cpu['label']}" if cpu else "—"))
             ram_gb = hp.get("ram_gb") or 0
             rows.append(("RAM", f"{ram_gb} GB" if ram_gb else "—"))
-            net = hw.get_item(hp.get("network_id") or "")
-            rows.append(("Network", net["label"] if net else "—"))
         else:
             rows.extend([
                 ("vCPU", str(hp.get("vcpu_count") or "—")),
@@ -71,25 +70,24 @@ def render_step3(form: dict) -> None:
 
         for label, value in rows:
             with ui.row().classes("w-full justify-between gap-4"):
-                ui.label(label).classes("text-xs text-zinc-400 w-36 shrink-0")
-                ui.label(str(value or "")).classes("text-xs text-zinc-100")
+                ui.label(label).classes(UIStyles.LABEL_FIELD + " w-36 shrink-0")
+                ui.label(str(value or "")).classes("text-xs text-slate-800 dark:text-zinc-100")
 
         storage_vols = hp.get("storage_disks") or []
         if storage_vols:
-            ui.separator().classes("border-zinc-700 my-1")
-            ui.label("Storage Volumes").classes("text-xs text-zinc-400 font-semibold")
+            ui.separator().classes("bg-slate-200 dark:bg-white/10 my-1")
+            ui.label("Storage").classes(UIStyles.LABEL_FIELD)
             total_gb = 0
             for vol in storage_vols:
                 item = hw.get_item(vol.get("disk_id") or "")
                 sz = int(vol.get("size_gb") or 0) or ((item or {}).get("size_gb") or 0)
-                cnt = int(vol.get("count", 1))
-                total_gb += sz * cnt
+                total_gb += sz
                 sz_str = (f"{sz//1024:.1f} TB" if sz >= 1024 else f"{sz} GB") if sz else "?"
                 label_str = (item or {}).get("label") or vol.get("disk_id") or "—"
                 mount = vol.get("mount") or "—"
                 with ui.row().classes("w-full justify-between gap-4 pl-2"):
-                    ui.label(mount).classes("text-xs text-zinc-300 w-36 shrink-0 font-mono")
-                    ui.label(f"{sz_str} ×{cnt}  [{label_str}]").classes("text-xs text-zinc-400")
+                    ui.label(mount).classes("text-xs w-36 shrink-0 font-mono text-slate-600 dark:text-zinc-300")
+                    ui.label(f"{sz_str}  [{label_str}]").classes(UIStyles.TEXT_MUTED)
             if total_gb:
                 lbl = f"{total_gb//1024:.1f} TB" if total_gb >= 1024 else f"{total_gb} GB"
-                ui.label(f"Total: {lbl}").classes("text-xs text-emerald-400 font-semibold pl-2")
+                ui.label(f"Total: {lbl}").classes(UIStyles.STATUS_TEXT_SUCCESS + " font-semibold pl-2")

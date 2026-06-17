@@ -1,7 +1,9 @@
-"""Server Manager — main page UI (moved from entrypoint.py)."""
+"""Server Manager — main page UI."""
 from __future__ import annotations
 
 from nicegui import ui
+
+from core.api import UIStyles
 
 from ..controller.service import server_manager_service as svc
 from ..controller.configurator import open_configurator
@@ -16,27 +18,22 @@ def render_server_manager_page(ctx) -> None:
     ):
         _render_header()
         _render_stats_row()
-        ui.separator().classes("border-zinc-700")
+        ui.separator().classes("border-slate-200 dark:border-white/5")
         _render_list(ctx)
 
 
 def _render_header() -> None:
-    with ui.card().classes(
-        "w-full p-0 overflow-hidden bg-gradient-to-br "
-        "from-zinc-950 via-zinc-900 to-slate-950 border border-zinc-800"
+    with ui.card().classes(UIStyles.CARD_GLASS + " w-full").style(
+        "padding: 0; flex-wrap: nowrap"
     ):
-        ui.element("div").classes(
-            "h-1 w-full bg-gradient-to-r from-blue-500 via-cyan-400 to-teal-400"
-        )
+        ui.element("div").classes(UIStyles.GRAD_BAR_ACCENT)
         with ui.column().classes("w-full p-6 gap-2"):
-            ui.label("Server Manager").classes(
-                "text-3xl font-black text-zinc-50"
-            )
+            ui.label("Server Manager").classes(UIStyles.TITLE_H1)
             ui.label(
                 "Manage your server inventory. "
                 "Edit catalog/hardware.yml to add hardware options. "
                 "Events are emitted on every change for downstream plugins."
-            ).classes("text-sm text-zinc-400")
+            ).classes(UIStyles.TEXT_MUTED)
 
 
 def _render_stats_row() -> None:
@@ -67,10 +64,8 @@ def _render_list(ctx) -> None:
 
 
 def _mini_stat(label: str, value, icon: str, color: str = "blue") -> None:
-    with ui.card().classes(
-        f"flex-1 min-w-32 p-4 gap-1 bg-zinc-900 border border-{color}-800"
-    ):
+    with ui.card().classes(UIStyles.CARD_BASE + " flex-1 min-w-32 p-4 gap-1"):
         with ui.row().classes("items-center gap-2"):
             ui.icon(icon, size="16px").classes(f"text-{color}-400")
-            ui.label(label).classes("text-xs text-zinc-400")
-        ui.label(str(value)).classes("text-2xl font-bold text-zinc-100")
+            ui.label(label).classes(UIStyles.LABEL_MINI)
+        ui.label(str(value)).classes(UIStyles.TITLE_H2)

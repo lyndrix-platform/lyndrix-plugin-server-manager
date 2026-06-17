@@ -2,18 +2,40 @@
 from __future__ import annotations
 
 from nicegui import ui
+from core.api import UIStyles
 
 from ..service import server_manager_service as svc
 
 
+def _tile_cls(*, selected: bool, disabled: bool = False) -> str:
+    """Themed selectable-tile classes for the given state (border + bg + text)."""
+    if disabled:
+        state = UIStyles.TILE_DISABLED
+    elif selected:
+        state = UIStyles.TILE_SELECTED
+    else:
+        state = UIStyles.TILE_DEFAULT
+    return f"{UIStyles.TILE_BASE} {state}"
+
+
+def _tile_icon_cls(*, selected: bool, disabled: bool = False, entity_color: str | None = None) -> str:
+    """Icon colour for a tile: primary when selected, muted when disabled, else the
+    catalog-provided per-entity accent colour."""
+    if disabled:
+        return UIStyles.ICON_MUTED
+    if selected:
+        return UIStyles.ICON_PRIMARY
+    return f"text-{entity_color}-400" if entity_color else UIStyles.ICON_MUTED
+
+
 def render_step1(form: dict, on_features_refresh) -> None:  # noqa: C901
     """Render step 1: name/hostname · provider/env/type · OS · product · status/tags/notes."""
-    ui.label("Basic Information & Product").classes("text-base font-semibold text-zinc-200")
+    ui.label("Basic Information & Product").classes(UIStyles.TITLE_H3)
 
     with ui.row().classes("w-full gap-4"):
-        ui.input("Server Name *").props("outlined dark dense").classes("flex-1") \
+        ui.input("Server Name *").props(UIStyles.INPUT_PROPS).classes("flex-1") \
             .bind_value(form, "name")
-        ui.input("Hostname / IP").props("outlined dark dense").classes("flex-1") \
+        ui.input("Hostname").props(UIStyles.INPUT_PROPS).classes("flex-1") \
             .bind_value(form, "hostname")
 
     envs = svc.catalog.environments()
@@ -31,6 +53,7 @@ def render_step1(form: dict, on_features_refresh) -> None:  # noqa: C901
         form["service_class_id"] = ""
         form["os_family_id"] = ""
         form["os_version_id"] = ""
+        form["os_type"] = ""
         _render_provider_section()
         on_features_refresh()
 
@@ -41,6 +64,7 @@ def render_step1(form: dict, on_features_refresh) -> None:  # noqa: C901
         form["service_class_id"] = ""
         form["os_family_id"] = ""
         form["os_version_id"] = ""
+        form["os_type"] = ""
         _render_stage_area()
         _render_type_area()
         _render_os_area()
@@ -54,10 +78,12 @@ def render_step1(form: dict, on_features_refresh) -> None:  # noqa: C901
         form["service_class_id"] = ""
         form["os_family_id"] = ""
         form["os_version_id"] = ""
+        form["os_type"] = ""
         _render_type_area()
         _render_os_area()
         _render_product_area()
         _render_product_extras_area()
+        on_features_refresh()
 
     def _on_product_change(pid: str) -> None:
         form["product_id"] = pid
@@ -77,50 +103,41 @@ def render_step1(form: dict, on_features_refresh) -> None:  # noqa: C901
             form["os_version_id"] = (pref or (versions[0] if versions else {})).get("id", "")
         _render_product_area()
         _render_product_extras_area()
+        on_features_refresh()
 
     def _on_os_change(fam_id: str) -> None:
         form["os_family_id"] = fam_id
         form["os_version_id"] = ""
+        form["os_type"] = svc.catalog.products().os_type_for_family(fam_id) or ""
         form["product_id"] = ""
         form["service_class_id"] = ""
         _render_os_area()
         _render_product_area()
         _render_product_extras_area()
+        on_features_refresh()
 
     # ── Tile builders ──────────────────────────────────────────────────────
     def _render_provider_tiles() -> None:
-        ui.label("Provider *").classes("text-xs font-semibold text-zinc-400 mt-1")
+        ui.label("Provider *").classes(UIStyles.LABEL_FIELD + " mt-1")
         with ui.row().classes("w-full gap-3 flex-wrap"):
             for p in envs.get_providers():
                 pid = p["id"]
                 is_ph = p.get("placeholder", False)
                 is_sel = form.get("provider_id") == pid
-                if is_ph:
-                    border = "border-zinc-800 opacity-40 cursor-not-allowed"
-                    text_col = "text-zinc-600"
-                    icon_col = "text-zinc-700"
-                    bg = "bg-zinc-900/50"
-                elif is_sel:
-                    border = "border-primary"
-                    text_col = "text-zinc-100"
-                    icon_col = "text-primary"
-                    bg = "bg-primary/10"
-                else:
-                    border = "border-zinc-700 hover:border-zinc-500 cursor-pointer"
-                    text_col = "text-zinc-300"
-                    icon_col = f"text-{p.get('color', 'zinc')}-400"
-                    bg = "bg-zinc-900 hover:bg-zinc-800"
                 tile = ui.element("div").classes(
-                    f"flex flex-col items-center justify-center gap-1 p-3 rounded "
-                    f"border {border} {bg} select-none transition-colors"
+                    f"flex flex-col items-center justify-center gap-1 p-3 "
+                    f"{_tile_cls(selected=is_sel, disabled=is_ph)}"
                 ).style("min-width:100px; min-height:80px")
                 with tile:
-                    ui.icon(p.get("icon", "dns"), size="26px").classes(icon_col)
+                    ui.icon(p.get("icon", "dns"), size="26px").classes(
+                        _tile_icon_cls(selected=is_sel, disabled=is_ph,
+                                       entity_color=p.get("color"))
+                    )
                     ui.label(p["label"]).classes(
-                        f"text-xs font-bold {text_col} text-center leading-tight"
+                        "text-xs font-bold text-center leading-tight"
                     )
                     if is_ph:
-                        ui.label("soon").classes("text-[10px] text-zinc-600 italic")
+                        ui.label("soon").classes(UIStyles.TEXT_HINT + " italic")
                 if not is_ph:
                     tile.on("click", lambda _, _pid=pid: _on_provider_change(_pid))
 
@@ -150,32 +167,23 @@ def render_step1(form: dict, on_features_refresh) -> None:  # noqa: C901
                     allowed_types = profile.get("allowed_server_types", [])
                     if allowed_types:
                         ui.label("(" + " / ".join(allowed_types) + ")").classes(
-                            "text-xs text-zinc-500"
+                            UIStyles.TEXT_MUTED
                         )
-            ui.label("Stage *").classes("text-xs font-semibold text-zinc-400")
+            ui.label("Stage *").classes(UIStyles.LABEL_FIELD)
             with ui.row().classes("w-full gap-3 flex-wrap"):
                 for s in stages:
                     compound = s["id"]  # "provider:stage"
                     is_sel = compound == current_env
-                    color = s.get("color", "zinc")
-                    if is_sel:
-                        border = "border-primary"
-                        bg = "bg-primary/10"
-                        text_col = "text-zinc-100"
-                        icon_col = "text-primary"
-                    else:
-                        border = "border-zinc-700 hover:border-zinc-500 cursor-pointer"
-                        bg = "bg-zinc-900 hover:bg-zinc-800"
-                        text_col = "text-zinc-300"
-                        icon_col = f"text-{color}-400"
                     tile = ui.element("div").classes(
-                        f"flex flex-col items-center justify-center gap-1 p-3 rounded "
-                        f"border {border} {bg} select-none transition-colors"
+                        f"flex flex-col items-center justify-center gap-1 p-3 "
+                        f"{_tile_cls(selected=is_sel)}"
                     ).style("min-width:90px; min-height:72px")
                     with tile:
-                        ui.icon(s.get("icon", "layers"), size="22px").classes(icon_col)
+                        ui.icon(s.get("icon", "layers"), size="22px").classes(
+                            _tile_icon_cls(selected=is_sel, entity_color=s.get("color"))
+                        )
                         ui.label(s["label"]).classes(
-                            f"text-xs font-semibold {text_col} text-center leading-tight"
+                            "text-xs font-semibold text-center leading-tight"
                         )
                     tile.on("click", lambda _, _cid=compound: _on_env_change(_cid))
 
@@ -196,35 +204,22 @@ def render_step1(form: dict, on_features_refresh) -> None:  # noqa: C901
         if not form.get("server_type") and len(allowed) == 1:
             form["server_type"] = next(iter(allowed))
         with ta:
-            ui.label("Server Type *").classes("text-xs font-semibold text-zinc-400")
+            ui.label("Server Type *").classes(UIStyles.LABEL_FIELD)
             with ui.row().classes("w-full gap-3 flex-wrap"):
                 for t in all_types:
                     tid = t["id"]
                     is_dis = tid not in allowed
                     is_sel = form.get("server_type") == tid
-                    if is_dis:
-                        border = "border-zinc-800 opacity-40 cursor-not-allowed"
-                        text_col = "text-zinc-600"
-                        icon_col = "text-zinc-700"
-                        bg = "bg-zinc-900/50"
-                    elif is_sel:
-                        border = "border-primary"
-                        text_col = "text-zinc-100"
-                        icon_col = "text-primary"
-                        bg = "bg-primary/10"
-                    else:
-                        border = "border-zinc-700 hover:border-zinc-500 cursor-pointer"
-                        text_col = "text-zinc-300"
-                        icon_col = "text-zinc-400"
-                        bg = "bg-zinc-900 hover:bg-zinc-800"
                     tile = ui.element("div").classes(
-                        f"flex flex-col items-center justify-center gap-1 p-3 rounded "
-                        f"border {border} {bg} select-none transition-colors"
+                        f"flex flex-col items-center justify-center gap-1 p-3 "
+                        f"{_tile_cls(selected=is_sel, disabled=is_dis)}"
                     ).style("min-width:100px; min-height:80px")
                     with tile:
-                        ui.icon(t.get("icon", "memory"), size="26px").classes(icon_col)
+                        ui.icon(t.get("icon", "memory"), size="26px").classes(
+                            _tile_icon_cls(selected=is_sel, disabled=is_dis)
+                        )
                         ui.label(t.get("label", tid)).classes(
-                            f"text-xs font-bold {text_col} text-center leading-tight"
+                            "text-xs font-bold text-center leading-tight"
                         )
                     if not is_dis:
                         tile.on("click", lambda _, _tid=tid: _on_type_change(_tid))
@@ -248,29 +243,21 @@ def render_step1(form: dict, on_features_refresh) -> None:  # noqa: C901
         if not seen:
             return
         with oa:
-            ui.label("Operating System *").classes("text-xs font-semibold text-zinc-400")
+            ui.label("Operating System *").classes(UIStyles.LABEL_FIELD)
             with ui.row().classes("w-full gap-3 flex-wrap"):
                 for fam in seen.values():
                     fid = fam["id"]
                     is_sel = form.get("os_family_id") == fid
-                    if is_sel:
-                        border = "border-primary"
-                        bg = "bg-primary/10"
-                        text_col = "text-zinc-100"
-                        icon_col = "text-primary"
-                    else:
-                        border = "border-zinc-700 hover:border-zinc-500 cursor-pointer"
-                        bg = "bg-zinc-900 hover:bg-zinc-800"
-                        text_col = "text-zinc-300"
-                        icon_col = "text-zinc-400"
                     tile = ui.element("div").classes(
-                        f"flex flex-col items-center justify-center gap-1 p-3 rounded "
-                        f"border {border} {bg} select-none transition-colors"
+                        f"flex flex-col items-center justify-center gap-1 p-3 "
+                        f"{_tile_cls(selected=is_sel)}"
                     ).style("min-width:100px; min-height:72px")
                     with tile:
-                        ui.icon(fam.get("icon", "computer"), size="22px").classes(icon_col)
+                        ui.icon(fam.get("icon", "computer"), size="22px").classes(
+                            _tile_icon_cls(selected=is_sel)
+                        )
                         ui.label(fam.get("label", fid)).classes(
-                            f"text-xs font-bold {text_col} leading-tight"
+                            "text-xs font-bold leading-tight"
                         )
                     tile.on("click", lambda _, _fid=fid: _on_os_change(_fid))
 
@@ -297,39 +284,30 @@ def render_step1(form: dict, on_features_refresh) -> None:  # noqa: C901
             with pa:
                 ui.label(
                     "No products available for this environment / type combination."
-                ).classes("text-xs text-zinc-500 italic")
+                ).classes(UIStyles.TEXT_HINT + " italic")
             return
         prod_ids = [p["id"] for p in products]
         current = form.get("product_id") or ""
         if current not in prod_ids:
             form["product_id"] = prod_ids[0] if len(prod_ids) == 1 else ""
         with pa:
-            ui.label("Server Product *").classes("text-xs font-semibold text-zinc-400")
+            ui.label("Server Product *").classes(UIStyles.LABEL_FIELD)
             with ui.row().classes("w-full gap-3 flex-wrap"):
                 for p in products:
                     pid = p["id"]
                     is_sel = form.get("product_id") == pid
-                    if is_sel:
-                        border = "border-primary"
-                        bg = "bg-primary/10"
-                        text_col = "text-zinc-100"
-                        icon_col = "text-primary"
-                    else:
-                        border = "border-zinc-700 hover:border-zinc-500 cursor-pointer"
-                        bg = "bg-zinc-900 hover:bg-zinc-800"
-                        text_col = "text-zinc-300"
-                        icon_col = "text-zinc-400"
                     tile = ui.element("div").classes(
-                        f"flex flex-col items-start gap-1 p-3 rounded "
-                        f"border {border} {bg} select-none transition-colors"
+                        f"flex flex-col items-start gap-1 p-3 {_tile_cls(selected=is_sel)}"
                     ).style("min-width:140px; max-width:220px")
                     with tile:
                         with ui.row().classes("items-center gap-2"):
-                            ui.icon(p.get("icon", "inventory_2"), size="18px").classes(icon_col)
-                            ui.label(p.get("label", pid)).classes(f"text-xs font-bold {text_col}")
+                            ui.icon(p.get("icon", "inventory_2"), size="18px").classes(
+                                _tile_icon_cls(selected=is_sel)
+                            )
+                            ui.label(p.get("label", pid)).classes("text-xs font-bold")
                         desc = (p.get("description") or "").strip().split("\n")[0][:80]
                         if desc:
-                            ui.label(desc).classes("text-[10px] text-zinc-500 leading-tight")
+                            ui.label(desc).classes("text-[10px] opacity-70 leading-tight")
                     tile.on("click", lambda _, _pid=pid: _on_product_change(_pid))
 
     def _render_product_extras_area() -> None:
@@ -349,35 +327,26 @@ def render_step1(form: dict, on_features_refresh) -> None:  # noqa: C901
 
         with ea:
             if scs:
-                ui.label("Service Class *").classes("text-xs font-semibold text-zinc-400 mt-2")
+                ui.label("Service Class *").classes(UIStyles.LABEL_FIELD + " mt-2")
                 with ui.row().classes("w-full gap-2 flex-wrap"):
                     for sc in scs:
                         sid = sc["id"]
                         is_sel = form.get("service_class_id") == sid
-                        color = sc.get("color", "blue")
-                        if is_sel:
-                            border = "border-primary"
-                            bg = "bg-primary/10"
-                            text_col = "text-zinc-100"
-                            icon_col = "text-primary"
-                        else:
-                            border = "border-zinc-700 hover:border-zinc-500 cursor-pointer"
-                            bg = "bg-zinc-900 hover:bg-zinc-800"
-                            text_col = "text-zinc-300"
-                            icon_col = f"text-{color}-400"
                         tile = ui.element("div").classes(
                             f"flex flex-col items-center justify-center gap-0.5 px-3 py-2 "
-                            f"rounded border {border} {bg} select-none transition-colors"
+                            f"{_tile_cls(selected=is_sel)}"
                         ).style("min-width:96px").tooltip(sc.get("description", ""))
                         with tile:
                             with ui.row().classes("items-center gap-1"):
-                                ui.icon(sc.get("icon", "verified"), size="16px").classes(icon_col)
+                                ui.icon(sc.get("icon", "verified"), size="16px").classes(
+                                    _tile_icon_cls(selected=is_sel, entity_color=sc.get("color"))
+                                )
                                 ui.label(sc.get("label", sid)).classes(
-                                    f"text-xs font-bold {text_col} leading-tight"
+                                    "text-xs font-bold leading-tight"
                                 )
                             if sc.get("sub_label"):
                                 ui.label(sc["sub_label"]).classes(
-                                    f"text-[10px] {text_col} opacity-70 leading-tight"
+                                    "text-[10px] opacity-70 leading-tight"
                                 )
                         if not is_sel:
                             tile.on("click", lambda _, _sid=sid: (
@@ -388,7 +357,7 @@ def render_step1(form: dict, on_features_refresh) -> None:  # noqa: C901
             if os_vars:
                 cur_fam = next((f for f in os_vars if f["id"] == form.get("os_family_id")), None)
                 if cur_fam and cur_fam.get("os_versions"):
-                    ui.label("OS Version *").classes("text-xs font-semibold text-zinc-400 mt-2")
+                    ui.label("OS Version *").classes(UIStyles.LABEL_FIELD + " mt-2")
                     with ui.row().classes("gap-2 flex-wrap"):
                         for ver in cur_fam["os_versions"]:
                             vid = ver["id"]
@@ -400,25 +369,14 @@ def render_step1(form: dict, on_features_refresh) -> None:  # noqa: C901
                                 "exceptional_until": "amber",
                                 "supported_for_legacy": "zinc",
                             }.get(lc, "zinc")
-                            if is_sel:
-                                border = "border-primary"
-                                bg = "bg-primary/10"
-                                text_col = "text-zinc-100"
-                            else:
-                                border = "border-zinc-700 hover:border-zinc-500 cursor-pointer"
-                                bg = "bg-zinc-900 hover:bg-zinc-800"
-                                text_col = "text-zinc-300"
                             tip = lc.replace("_", " ")
                             if ver.get("end_of_support"):
                                 tip += f" until {ver['end_of_support']}"
                             tile = ui.element("div").classes(
-                                f"flex items-center gap-2 px-3 py-1.5 rounded border "
-                                f"{border} {bg} select-none transition-colors"
+                                f"flex items-center gap-2 px-3 py-1.5 {_tile_cls(selected=is_sel)}"
                             ).tooltip(tip)
                             with tile:
-                                ui.label(ver.get("label", vid)).classes(
-                                    f"text-xs font-semibold {text_col}"
-                                )
+                                ui.label(ver.get("label", vid)).classes("text-xs font-semibold")
                                 ui.element("div").classes(
                                     f"w-1.5 h-1.5 rounded-full bg-{lc_color}-400"
                                 )
@@ -461,17 +419,17 @@ def render_step1(form: dict, on_features_refresh) -> None:  # noqa: C901
     _render_product_area()
     _render_product_extras_area()
 
-    ui.separator().classes("border-zinc-800")
+    ui.separator().classes("bg-slate-200 dark:bg-white/10")
 
     with ui.row().classes("w-full gap-4"):
         ui.select(
             label="Status",
             options={"": "All Statuses"} | {s["id"]: s["label"] for s in status_defs},
             value=form["status"],
-        ).props("outlined dark dense").classes("flex-1") \
+        ).props(UIStyles.INPUT_PROPS).classes("flex-1") \
             .bind_value(form, "status")
-        ui.input("Tags (comma-separated)").props("outlined dark dense") \
+        ui.input("Tags (comma-separated)").props(UIStyles.INPUT_PROPS) \
             .classes("flex-1").bind_value(form, "tags_raw")
 
-    ui.textarea("Notes").props("outlined dark dense rows=2").classes("w-full") \
+    ui.textarea("Notes").props(f"{UIStyles.INPUT_PROPS} rows=2").classes("w-full") \
         .bind_value(form, "notes")

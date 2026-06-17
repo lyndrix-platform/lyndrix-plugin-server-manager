@@ -15,8 +15,6 @@ and inspect environment_id / old_profile / new_profile to decide what to do.
 """
 from __future__ import annotations
 
-from typing import Any
-
 from sqlalchemy import select
 
 from core.logger import get_logger
@@ -222,9 +220,6 @@ class ServerManagerService:
             profile_catalog=self.catalog.profiles(),
             product_catalog=self.catalog.products(),
         )
-
-    # Backward-compat shim used by ui_configurator (legacy call signature)    def validate_hardware(self, server_type: str, profile: dict) -> list[dict]:
-        return self.catalog.hardware().validate_hardware(server_type, profile)
 
     # ── Stats ────────────────────────────────────────────────────────────────
 
