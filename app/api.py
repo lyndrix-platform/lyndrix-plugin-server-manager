@@ -79,10 +79,25 @@ class CatalogPathPayload(BaseModel):
     path: Optional[str] = None
 
 
+class EvaluateComboPayload(BaseModel):
+    # Authoritative (vCPU, OS-family, RAM) verdict for the step-2 VM matrix tiles.
+    product_id: str
+    os_family_id: Optional[str] = None
+    vcpu: int
+    ram_gb: int
+
+
 # ── Catalog projection ──────────────────────────────────────────────────────────
 
 def _catalog_payload(service: ServerManagerService) -> dict:
-    """Everything the React forms + settings view need, in one shot."""
+    """Everything the React forms + settings view need, in one shot.
+
+    The wizard drives the full 3-step configurator from this single projection:
+    providers→stages cascade, profile tile/limit config + features, product
+    service-classes/os-variants/resources, and the raw hardware option lists.
+    All values come straight from the catalog accessors so the React layer never
+    re-implements the matrix/validation logic (that stays in the Python service).
+    """
     cat = service.catalog
     hw = cat.hardware()
     envs = cat.environments()
@@ -104,26 +119,112 @@ def _catalog_payload(service: ServerManagerService) -> dict:
         for e in envs.get_all()
     ]
 
+    # Provider → stage cascade (step 1). Stages carry the compound environment_id.
+    providers = []
+    for p in envs.get_providers():
+        pid = p["id"]
+        providers.append({
+            "id": pid,
+            "label": p.get("display_label") or p.get("label", pid),
+            "profile_id": p.get("profile_id", "edc"),
+            "icon": p.get("icon"),
+            "color": p.get("color"),
+            "placeholder": p.get("placeholder", False),
+            "description": p.get("description"),
+            "stages": [
+                {
+                    "id": s["id"],  # "provider:stage"
+                    "label": s.get("label", s["id"]),
+                    "icon": s.get("icon"),
+                    "color": s.get("color"),
+                    "order_workflow": s.get("order_workflow"),
+                    "description": s.get("description"),
+                }
+                for s in envs.get_stages_for_provider(pid)
+            ],
+        })
+
+    profiles_out = []
+    for p in profiles.get_all():
+        pid = p.get("id")
+        profiles_out.append({
+            "id": pid,
+            "label": p.get("label", pid),
+            "icon": p.get("icon"),
+            "color": p.get("color"),
+            "allowed_server_types": profiles.allowed_server_types(pid),
+            "features": profiles.get_features(pid),
+            "ram_steps_gb": profiles.get_ram_steps(pid),
+            "vcpu_tiles": profiles.get_vcpu_tiles(pid),
+            "socket_options": profiles.get_socket_options(pid),
+            "ram_manual_max_gb": profiles.get_ram_manual_max(pid),
+            "storage_manual_max_gb": profiles.get_storage_manual_max(pid),
+            "multi_storage": profiles.multi_storage_allowed(pid),
+        })
+
+    products_out = []
+    for p in products.get_all():
+        pid = p.get("id")
+        products_out.append({
+            "id": pid,
+            "label": p.get("label", pid),
+            "icon": p.get("icon"),
+            "description": p.get("description"),
+            "compatible_profiles": p.get("compatible_profiles", []),
+            "compatible_server_types": p.get("compatible_server_types", []),
+            "service_classes": products.get_service_classes(pid),
+            "os_variants": products.get_os_variants(pid),
+            "allowed_cpu_ids": products.get_allowed_ids(pid, "cpu"),
+            "allowed_storage_ids": products.get_allowed_ids(pid, "storage"),
+            "resources": products.get_resources(pid),
+        })
+
+    hardware = {
+        "cpu_options": [
+            {
+                "id": c.get("id"),
+                "label": c.get("label", c.get("id")),
+                "cores": c.get("cores"),
+                "threads": c.get("threads"),
+                "tdp_w": c.get("tdp_w"),
+                "base_ghz": c.get("base_ghz"),
+                "server_model": c.get("server_model"),
+                "compatible_types": c.get("compatible_types", []),
+            }
+            for c in hw.get_cpu_options()
+        ],
+        "storage_options": [
+            {
+                "id": s.get("id"),
+                "label": s.get("label", s.get("id")),
+                "type": s.get("type"),
+                "description": s.get("description"),
+                "compatible_types": s.get("compatible_types", []),
+            }
+            for s in hw.get_storage_options()
+        ],
+        "ram_options": [
+            {
+                "id": r.get("id"),
+                "label": r.get("label", r.get("id")),
+                "size_gb": r.get("size_gb"),
+                "compatible_types": r.get("compatible_types", []),
+            }
+            for r in hw.get_ram_options()
+        ],
+    }
+
     return {
         "catalog_dir": current_dir,
         "is_default": is_default,
         "environments": environments,
+        "providers": providers,
         "server_types": hw.get_server_types(),
         "statuses": settings.get_statuses(),
         "os_types": settings.get_os_types(),
-        "profiles": [
-            {"id": p.get("id"), "label": p.get("label", p.get("id"))}
-            for p in profiles.get_all()
-        ],
-        "products": [
-            {
-                "id": p.get("id"),
-                "label": p.get("label", p.get("id")),
-                "compatible_profiles": p.get("compatible_profiles", []),
-                "compatible_server_types": p.get("compatible_server_types", []),
-            }
-            for p in products.get_all()
-        ],
+        "profiles": profiles_out,
+        "products": products_out,
+        "hardware": hardware,
         "stats": {
             "cpu_options": len(hw.get_cpu_options()),
             "ram_options": len(hw.get_ram_options()),
@@ -218,6 +319,24 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
             os_family_id=payload.os_family_id,
         )
         return {"issues": issues}
+
+    @router.post("/catalog/evaluate-combo")
+    async def evaluate_combo(
+        payload: EvaluateComboPayload,
+        identity: ApiIdentity = Depends(require_permission("api:read")),
+    ):
+        """Wrap ProductCatalog.evaluate_combo — the VM vCPU/RAM matrix verdict.
+
+        Returns {status: ok|special|invalid|unknown, message, ram_min, ram_max,
+        generation, alt_platform}. The React step-2 tiles call this (debounced)
+        instead of re-deriving the matrix client-side.
+        """
+        return service.catalog.products().evaluate_combo(
+            payload.product_id,
+            payload.os_family_id,
+            payload.vcpu,
+            payload.ram_gb,
+        )
 
     # ── Catalog ────────────────────────────────────────────────────────────────
     @router.get("/catalog")

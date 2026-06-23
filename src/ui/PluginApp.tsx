@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { serverManagerApi } from './lib/api'
 import type {
-  ServerRecord, ServerInput, Catalog, StatusOption,
+  ServerRecord, Catalog, StatusOption,
 } from './lib/api'
+import ServerWizard from './ServerWizard'
 
 // ─── Shared style helpers ───────────────────────────────────────────────────
 
@@ -296,256 +297,6 @@ function ServerListView({
   )
 }
 
-// ─── Server form (create / edit) ────────────────────────────────────────────
-
-interface FormState {
-  name: string
-  hostname: string
-  environment_id: string
-  server_type: string
-  status: string
-  os_type: string
-  tags: string
-  notes: string
-  cpu: string
-  ram_gb: string
-  storage_gb: string
-}
-
-function emptyForm(catalog: Catalog | null): FormState {
-  return {
-    name: '',
-    hostname: '',
-    environment_id: catalog?.environments[0]?.id ?? '',
-    server_type: catalog?.server_types[0]?.id ?? '',
-    status: catalog?.statuses[0]?.id ?? '',
-    os_type: '',
-    tags: '',
-    notes: '',
-    cpu: '',
-    ram_gb: '',
-    storage_gb: '',
-  }
-}
-
-function ServerForm({
-  serverId, onSaved, onCancel,
-}: {
-  serverId: number | null
-  onSaved: () => void
-  onCancel: () => void
-}) {
-  const catalog = useCatalog()
-  const [form, setForm] = useState<FormState>(emptyForm(null))
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [loaded, setLoaded] = useState(serverId === null)
-  const isEdit = serverId !== null
-
-  // Seed defaults from catalog once it loads (create mode only).
-  useEffect(() => {
-    if (!isEdit && catalog) {
-      setForm((f) => ({
-        ...f,
-        environment_id: f.environment_id || (catalog.environments[0]?.id ?? ''),
-        server_type: f.server_type || (catalog.server_types[0]?.id ?? ''),
-        status: f.status || (catalog.statuses[0]?.id ?? ''),
-      }))
-    }
-  }, [catalog, isEdit])
-
-  // Load existing server for edit.
-  useEffect(() => {
-    if (serverId === null) return
-    serverManagerApi.getServer(serverId).then(({ server }) => {
-      const hp = server.hardware_profile || {}
-      setForm({
-        name: server.name,
-        hostname: server.hostname ?? '',
-        environment_id: server.environment_id,
-        server_type: server.server_type,
-        status: server.status,
-        os_type: server.os_type ?? '',
-        tags: (server.tags ?? []).join(', '),
-        notes: server.notes ?? '',
-        cpu: String((hp as Record<string, unknown>).vcpu_count ?? (hp as Record<string, unknown>).cpu_count ?? ''),
-        ram_gb: String((hp as Record<string, unknown>).ram_gb ?? ''),
-        storage_gb: String((hp as Record<string, unknown>).storage_gb ?? ''),
-      })
-      setLoaded(true)
-    }).catch((err) => setError(err instanceof Error ? err.message : 'Laden fehlgeschlagen'))
-  }, [serverId])
-
-  function set<K extends keyof FormState>(key: K, value: FormState[K]) {
-    setForm((f) => ({ ...f, [key]: value }))
-  }
-
-  function buildHardwareProfile(): Record<string, unknown> {
-    const hp: Record<string, unknown> = {}
-    const cpu = parseInt(form.cpu, 10)
-    const ram = parseInt(form.ram_gb, 10)
-    const storage = parseInt(form.storage_gb, 10)
-    if (!isNaN(cpu) && cpu > 0) {
-      hp[form.server_type === 'physical' ? 'cpu_count' : 'vcpu_count'] = cpu
-    }
-    if (!isNaN(ram) && ram > 0) hp.ram_gb = ram
-    if (!isNaN(storage) && storage > 0) hp.storage_gb = storage
-    return hp
-  }
-
-  async function save() {
-    setBusy(true)
-    setError(null)
-    try {
-      const payload: ServerInput = {
-        name: form.name.trim(),
-        hostname: form.hostname.trim() || null,
-        environment_id: form.environment_id,
-        server_type: form.server_type,
-        status: form.status,
-        os_type: form.os_type || null,
-        tags: form.tags.split(',').map((t) => t.trim()).filter(Boolean),
-        notes: form.notes.trim() || null,
-        hardware_profile: buildHardwareProfile(),
-      }
-      if (isEdit) {
-        await serverManagerApi.updateServer(serverId as number, payload)
-      } else {
-        await serverManagerApi.createServer(payload)
-      }
-      onSaved()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Speichern fehlgeschlagen')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const labelStyle: React.CSSProperties = { fontSize: '0.72rem', color: 'var(--lx-text-muted)', display: 'block' }
-  const fieldGap: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 3 }
-
-  if (!loaded) {
-    return (
-      <div style={{ maxWidth: 720, margin: '0 auto', padding: '3rem 1.5rem', color: 'var(--lx-text-muted)', textAlign: 'center' }}>
-        Lade…
-      </div>
-    )
-  }
-
-  return (
-    <div style={{ maxWidth: 720, margin: '0 auto', padding: '1.5rem 1.5rem 3rem' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
-        <a
-          href="#"
-          onClick={(e) => { e.preventDefault(); onCancel() }}
-          style={{ fontSize: '0.75rem', color: 'var(--lx-text-muted)', textDecoration: 'none' }}
-        >
-          ← Zurück
-        </a>
-        <h1 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 700, color: 'var(--lx-text)' }}>
-          {isEdit ? 'Server bearbeiten' : 'Server anlegen'}
-        </h1>
-      </div>
-
-      {error && <ErrorBox msg={error} />}
-
-      <div style={{ ...cardStyle, padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.9rem' }}>
-        <div style={fieldGap}>
-          <label style={labelStyle}>Name *</label>
-          <input style={inputStyle()} value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="srv-app-01" />
-        </div>
-
-        <div style={fieldGap}>
-          <label style={labelStyle}>Hostname</label>
-          <input style={inputStyle()} value={form.hostname} onChange={(e) => set('hostname', e.target.value)} placeholder="srv-app-01.example.com" />
-        </div>
-
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <div style={{ ...fieldGap, flex: '1 1 200px' }}>
-            <label style={labelStyle}>Umgebung *</label>
-            <select style={inputStyle()} value={form.environment_id} onChange={(e) => set('environment_id', e.target.value)}>
-              {(catalog?.environments ?? []).map((e) => (
-                <option key={e.id} value={e.id}>{e.provider_label ? `${e.provider_label} · ${e.label}` : e.label}</option>
-              ))}
-            </select>
-          </div>
-          <div style={{ ...fieldGap, flex: '1 1 140px' }}>
-            <label style={labelStyle}>Server-Typ *</label>
-            <select style={inputStyle()} value={form.server_type} onChange={(e) => set('server_type', e.target.value)}>
-              {(catalog?.server_types ?? []).map((t) => (<option key={t.id} value={t.id}>{t.label || t.id}</option>))}
-            </select>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <div style={{ ...fieldGap, flex: '1 1 140px' }}>
-            <label style={labelStyle}>Status</label>
-            <select style={inputStyle()} value={form.status} onChange={(e) => set('status', e.target.value)}>
-              {(catalog?.statuses ?? []).map((s) => (<option key={s.id} value={s.id}>{s.label || s.id}</option>))}
-            </select>
-          </div>
-          <div style={{ ...fieldGap, flex: '1 1 140px' }}>
-            <label style={labelStyle}>OS-Typ</label>
-            <select style={inputStyle()} value={form.os_type} onChange={(e) => set('os_type', e.target.value)}>
-              <option value="">—</option>
-              {(catalog?.os_types ?? []).map((o) => (<option key={o.id} value={o.id}>{o.label || o.id}</option>))}
-            </select>
-          </div>
-        </div>
-
-        <div style={fieldGap}>
-          <label style={labelStyle}>Tags (kommagetrennt)</label>
-          <input style={inputStyle()} value={form.tags} onChange={(e) => set('tags', e.target.value)} placeholder="prod, db, critical" />
-        </div>
-
-        {/* Minimal hardware section */}
-        <div style={{
-          borderTop: '1px solid var(--lx-border-soft)', paddingTop: '0.9rem',
-          fontSize: '0.72rem', fontWeight: 600, color: 'var(--lx-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em',
-        }}>
-          Hardware (vereinfacht)
-        </div>
-        <div style={{ fontSize: '0.68rem', color: 'var(--lx-text-muted)', marginTop: '-0.4rem' }}>
-          Für die vollständige Konfiguration mit Regelprüfung den NiceGUI-Konfigurator verwenden.
-        </div>
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <div style={{ ...fieldGap, flex: '1 1 120px' }}>
-            <label style={labelStyle}>{form.server_type === 'physical' ? 'Sockets' : 'vCPU'}</label>
-            <input type="number" style={inputStyle()} value={form.cpu} onChange={(e) => set('cpu', e.target.value)} placeholder="4" />
-          </div>
-          <div style={{ ...fieldGap, flex: '1 1 120px' }}>
-            <label style={labelStyle}>RAM (GB)</label>
-            <input type="number" style={inputStyle()} value={form.ram_gb} onChange={(e) => set('ram_gb', e.target.value)} placeholder="16" />
-          </div>
-          <div style={{ ...fieldGap, flex: '1 1 120px' }}>
-            <label style={labelStyle}>Storage (GB)</label>
-            <input type="number" style={inputStyle()} value={form.storage_gb} onChange={(e) => set('storage_gb', e.target.value)} placeholder="500" />
-          </div>
-        </div>
-
-        <div style={fieldGap}>
-          <label style={labelStyle}>Notizen</label>
-          <textarea
-            style={{ ...inputStyle(), minHeight: 70, resize: 'vertical', fontFamily: 'inherit' }}
-            value={form.notes}
-            onChange={(e) => set('notes', e.target.value)}
-          />
-        </div>
-
-        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.3rem' }}>
-          <Button label="Abbrechen" onClick={onCancel} disabled={busy} />
-          <Button
-            label={isEdit ? 'Speichern' : 'Anlegen'}
-            onClick={() => void save()}
-            disabled={busy || !form.name.trim() || !form.environment_id || !form.server_type}
-            variant="primary"
-          />
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // ─── Settings view ──────────────────────────────────────────────────────────
 
 function SettingsView() {
@@ -672,11 +423,16 @@ function SettingsView() {
 
 function ServerManagerView() {
   const [view, setView] = useState<{ kind: 'list' } | { kind: 'form'; id: number | null }>({ kind: 'list' })
+  const catalog = useCatalog()
 
   if (view.kind === 'form') {
+    if (!catalog) {
+      return <div style={{ maxWidth: 720, margin: '0 auto', padding: '3rem 1.5rem', color: 'var(--lx-text-muted)', textAlign: 'center' }}>Lade Katalog…</div>
+    }
     return (
-      <ServerForm
+      <ServerWizard
         serverId={view.id}
+        catalog={catalog}
         onSaved={() => setView({ kind: 'list' })}
         onCancel={() => setView({ kind: 'list' })}
       />
