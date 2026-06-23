@@ -37,6 +37,7 @@ except ImportError:
             return fn
         return _d
 
+from .app.api import build_plugin_router
 from .app.controller.service import server_manager_service as svc
 from .app.ui.settings import render_settings_ui as _render_settings_ui
 from .app.ui.widget import render_dashboard_widget as _render_widget
@@ -59,6 +60,22 @@ manifest = ModuleManifest(
     auto_enable_on_install=False,
     repo_url="https://github.com/lyndrix-platform/lyndrix-plugin-server-manager",
     ui_route="/server-manager",
+    react_ui=True,
+    react_routes=[
+        {
+            "path": "/server-manager",
+            "label": "Server Manager",
+            "icon": "dns",
+            "sidebar_visible": True,
+        },
+        {
+            "path": "/server-manager/settings",
+            "label": "Server Manager Einstellungen",
+            "icon": "settings",
+            "sidebar_visible": False,
+        },
+    ],
+    settings_ui_route="/server-manager/settings",
     permissions={
         "subscribe": ["db:connected"],
         "emit": [
@@ -87,6 +104,11 @@ def render_dashboard_widget(ctx):
 def setup(ctx):
     ctx.log.info("Server Manager: setup started")
     svc.set_context(ctx)
+
+    # Single auth'd router, mounted via the registry at
+    # /api/plugins/lyndrix.plugin.server_manager/ (registry enforces
+    # authentication; routes add api:read / api:write for authorization).
+    ctx.register_routes(build_plugin_router(svc))
 
     # db:connected fires BEFORE setup() is called (it's what triggers plugin activation).
     # Call on_db_connected() immediately if the DB is already ready, then subscribe for
