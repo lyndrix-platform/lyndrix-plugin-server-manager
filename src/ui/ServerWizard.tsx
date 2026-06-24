@@ -119,6 +119,16 @@ function Btn({ label, onClick, disabled, variant = 'default' }: {
 
 const tileRow: React.CSSProperties = { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'stretch' }
 
+// Material Icons glyph (font loaded globally by the shell). Renders nothing when no icon.
+function Ico({ name, size = 18 }: { name?: string | null; size?: number }) {
+  if (!name) return null
+  return (
+    <span className="material-icons" style={{ fontSize: size, lineHeight: 1, flexShrink: 0 }} aria-hidden>
+      {name}
+    </span>
+  )
+}
+
 // ─── Form state ─────────────────────────────────────────────────────────────
 
 export interface StorageDisk {
@@ -478,6 +488,7 @@ function Step1({
               onClick={() => pickProvider(p.id)}
               style={{ minWidth: 110, alignItems: 'center' }}
             >
+              <Ico name={p.icon} size={20} />
               <span style={{ fontWeight: 700, textAlign: 'center' }}>{p.label}</span>
               {p.placeholder && <span style={{ fontSize: '0.6rem', fontStyle: 'italic', opacity: 0.7 }}>bald</span>}
             </Tile>
@@ -496,6 +507,7 @@ function Step1({
             <div style={tileRow}>
               {provider.stages.map((s) => (
                 <Tile key={s.id} state={form.environment_id === s.id ? 'selected' : 'normal'} onClick={() => pickStage(s.id)} style={{ minWidth: 96, alignItems: 'center' }}>
+                  <Ico name={s.icon} />
                   <span style={{ textAlign: 'center' }}>{s.label}</span>
                 </Tile>
               ))}
@@ -526,7 +538,8 @@ function Step1({
             <label style={fieldLabel}>Betriebssystem *</label>
             <div style={tileRow}>
               {osFamilies.map((fam) => (
-                <Tile key={fam.id} state={form.os_family_id === fam.id ? 'selected' : 'normal'} onClick={() => pickOsFamily(fam.id)} style={{ minWidth: 110, alignItems: 'center' }}>
+                <Tile key={fam.id} state={form.os_family_id === fam.id ? 'selected' : 'normal'} onClick={() => pickOsFamily(fam.id)} style={{ minWidth: 110, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Ico name={fam.icon} />
                   <span style={{ fontWeight: 700 }}>{fam.label}</span>
                 </Tile>
               ))}
@@ -544,7 +557,10 @@ function Step1({
                 <div style={tileRow}>
                   {productsForSel.map((p) => (
                     <Tile key={p.id} state={form.product_id === p.id ? 'selected' : 'normal'} onClick={() => selectProduct(p.id)} style={{ minWidth: 150, maxWidth: 230 }}>
-                      <span style={{ fontWeight: 700 }}>{p.label}</span>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700 }}>
+                        <Ico name={p.icon} />
+                        {p.label}
+                      </span>
                       {p.description && <span style={{ fontSize: '0.62rem', opacity: 0.7, fontWeight: 400 }}>{p.description.split('\n')[0].slice(0, 80)}</span>}
                     </Tile>
                   ))}
@@ -560,7 +576,10 @@ function Step1({
             <div style={tileRow}>
               {selectedProduct.service_classes.map((sc) => (
                 <Tile key={sc.id} state={form.service_class_id === sc.id ? 'selected' : 'normal'} onClick={() => setField('service_class_id', sc.id)} style={{ minWidth: 100, alignItems: 'center' }}>
-                  <span style={{ fontWeight: 700 }}>{sc.label}</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700 }}>
+                    <Ico name={sc.icon} />
+                    {sc.label}
+                  </span>
                   {sc.sub_label && <span style={{ fontSize: '0.6rem', opacity: 0.7, fontWeight: 400 }}>{sc.sub_label}</span>}
                 </Tile>
               ))}
@@ -592,6 +611,7 @@ function Step1({
               const col = ok ? 'var(--lx-state-up)' : 'var(--lx-state-down)'
               return (
                 <span key={feat.id} title={feat.description} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.66rem', padding: '2px 8px', borderRadius: 'var(--lx-radius-sm)', color: col, background: `color-mix(in srgb, ${col} 12%, transparent)` }}>
+                  <Ico name={feat.icon} size={14} />
                   {ok ? '✓' : '✕'} {feat.label}
                 </span>
               )
