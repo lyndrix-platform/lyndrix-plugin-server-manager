@@ -156,13 +156,13 @@ class HardwareCatalog:
         ctx["ram_count"] = sum(m.get("count", 1) for m in ram_modules)
         # Prefer direct ram_gb (new format), fall back to module sum (legacy)
         ctx["ram_total_gb"] = int(profile.get("ram_gb") or 0) or sum(
-            (self.get_item(m.get("module_id")) or {}).get("size_gb", 0) * m.get("count", 1)
+            ((self.get_item(m.get("module_id")) or {}).get("size_gb") or 0) * m.get("count", 1)
             for m in ram_modules
         )
         storage_disks: list[dict] = profile.get("storage_disks") or []
         ctx["storage_count"] = len(storage_disks)
         ctx["storage_total_gb"] = sum(
-            (int(d.get("size_gb") or 0) or (self.get_item(d.get("disk_id") or "") or {}).get("size_gb", 0))
+            (int(d.get("size_gb") or 0) or ((self.get_item(d.get("disk_id") or "") or {}).get("size_gb") or 0))
             * int(d.get("count", 1))
             for d in storage_disks
         ) or int(profile.get("storage_gb") or 0)
@@ -865,7 +865,7 @@ class ConstraintEngine:
         disks = profile.get("storage_disks") or []
         if disks:
             return sum(
-                (int(d.get("size_gb") or 0) or (self._hw.get_item(d.get("disk_id") or "") or {}).get("size_gb", 0))
+                (int(d.get("size_gb") or 0) or ((self._hw.get_item(d.get("disk_id") or "") or {}).get("size_gb") or 0))
                 * int(d.get("count", 1))
                 for d in disks
             )
