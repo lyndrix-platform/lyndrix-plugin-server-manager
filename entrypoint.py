@@ -48,7 +48,7 @@ from .app.ui.page import render_server_manager_page
 manifest = ModuleManifest(
     id="lyndrix.plugin.server_manager",
     name="Server Manager",
-    version="0.0.8",
+    version="0.0.9",
     description=(
         "Central server inventory with configurable hardware catalogs, "
         "combination rules, and event-bus hooks for downstream order workflows."
