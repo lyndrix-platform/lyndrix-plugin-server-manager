@@ -7,20 +7,6 @@ import ServerWizard from './ServerWizard'
 
 // ─── Shared style helpers ───────────────────────────────────────────────────
 
-function inputStyle(): React.CSSProperties {
-  return {
-    width: '100%',
-    padding: '0.4rem 0.6rem',
-    fontSize: '0.8rem',
-    borderRadius: 'var(--lx-radius-sm)',
-    border: '1px solid var(--lx-border-soft)',
-    background: 'var(--lx-elevated)',
-    color: 'var(--lx-text)',
-    outline: 'none',
-    boxSizing: 'border-box',
-  }
-}
-
 const cardStyle: React.CSSProperties = {
   background: 'var(--lx-surface)',
   border: '1px solid var(--lx-border-soft)',
@@ -29,37 +15,22 @@ const cardStyle: React.CSSProperties = {
 }
 
 function Button({
-  label, onClick, disabled, variant = 'default', type = 'button',
+  label, onClick, disabled, variant = 'default', type = 'button', icon,
 }: {
   label: string
   onClick?: () => void
   disabled?: boolean
   variant?: 'default' | 'danger' | 'primary'
   type?: 'button' | 'submit'
+  icon?: string
 }) {
-  const accent = variant === 'danger' ? 'var(--lx-state-down)' : 'var(--lx-accent)'
+  const cls =
+    variant === 'primary' ? 'lx-btn lx-btn--primary lx-btn--sm'
+    : variant === 'danger' ? 'lx-btn lx-btn--danger lx-btn--sm'
+    : 'lx-btn lx-btn--secondary lx-btn--sm'
   return (
-    <button
-      type={type}
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        padding: '0.35rem 0.8rem',
-        fontSize: '0.72rem',
-        fontWeight: 600,
-        border: `1px solid color-mix(in srgb, ${accent} 40%, transparent)`,
-        borderRadius: 'var(--lx-radius-sm)',
-        background: variant === 'primary'
-          ? `color-mix(in srgb, ${accent} 20%, transparent)`
-          : variant === 'danger'
-            ? `color-mix(in srgb, ${accent} 10%, transparent)`
-            : 'var(--lx-surface)',
-        color: disabled ? 'var(--lx-text-muted)' : accent,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.5 : 1,
-        transition: 'opacity 0.15s',
-      }}
-    >
+    <button type={type} onClick={onClick} disabled={disabled} className={cls}>
+      {icon && <span className="material-icons" style={{ fontSize: 16 }}>{icon}</span>}
       {label}
     </button>
   )
@@ -68,7 +39,8 @@ function Button({
 function ErrorBox({ msg }: { msg: string }) {
   return (
     <div style={{
-      padding: '0.75rem 1rem',
+      display: 'flex', alignItems: 'center', gap: 8,
+      padding: '0.7rem 1rem',
       borderRadius: 'var(--lx-radius-md)',
       background: 'color-mix(in srgb, var(--lx-state-down) 10%, transparent)',
       border: '1px solid color-mix(in srgb, var(--lx-state-down) 25%, transparent)',
@@ -76,6 +48,7 @@ function ErrorBox({ msg }: { msg: string }) {
       fontSize: '0.8rem',
       marginBottom: '1rem',
     }}>
+      <span className="material-icons" style={{ fontSize: 18 }}>error_outline</span>
       {msg}
     </div>
   )
@@ -84,7 +57,8 @@ function ErrorBox({ msg }: { msg: string }) {
 function NoticeBox({ msg }: { msg: string }) {
   return (
     <div style={{
-      padding: '0.6rem 1rem',
+      display: 'flex', alignItems: 'center', gap: 8,
+      padding: '0.7rem 1rem',
       borderRadius: 'var(--lx-radius-md)',
       background: 'color-mix(in srgb, var(--lx-state-up) 10%, transparent)',
       border: '1px solid color-mix(in srgb, var(--lx-state-up) 25%, transparent)',
@@ -92,6 +66,7 @@ function NoticeBox({ msg }: { msg: string }) {
       fontSize: '0.8rem',
       marginBottom: '1rem',
     }}>
+      <span className="material-icons" style={{ fontSize: 18 }}>check_circle</span>
       {msg}
     </div>
   )
@@ -110,21 +85,12 @@ function StatusBadge({ status, statuses }: { status: string; statuses: StatusOpt
   const color = statusColor(status, statuses)
   const label = statuses.find((x) => x.id === status)?.label || status
   return (
-    <span style={{
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 4,
-      fontSize: '0.65rem',
-      fontWeight: 600,
+    <span className="lx-badge" style={{
       color,
-      background: `color-mix(in srgb, ${color} 12%, transparent)`,
-      border: `1px solid color-mix(in srgb, ${color} 30%, transparent)`,
-      borderRadius: 'var(--lx-radius-sm)',
-      padding: '2px 7px',
-      letterSpacing: '0.04em',
-      textTransform: 'uppercase',
+      background: `color-mix(in srgb, ${color} 13%, transparent)`,
+      borderColor: `color-mix(in srgb, ${color} 28%, transparent)`,
     }}>
-      <span style={{ width: 5, height: 5, borderRadius: '50%', background: color, flexShrink: 0 }} />
+      <span className="lx-dot" />
       {label}
     </span>
   )
@@ -199,98 +165,108 @@ function ServerListView({
 
   return (
     <div style={{ maxWidth: 1000, margin: '0 auto', padding: '1.5rem 1.5rem 3rem' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-        <h1 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 700, color: 'var(--lx-text)' }}>
-          Server Manager
-        </h1>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <Button label="Aktualisieren" onClick={() => void load()} disabled={loading} />
-          <Button label="+ Server" onClick={onCreate} variant="primary" />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '0.35rem' }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--lx-text)' }}>
+            Server Manager
+          </h1>
+          <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: 'var(--lx-text-muted)' }}>
+            {filtered.length} {filtered.length === 1 ? 'Server' : 'Server'} · Verwalte und konfiguriere deine Server.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+          <Button label="Aktualisieren" icon="refresh" onClick={() => void load()} disabled={loading} />
+          <Button label="Server" icon="add" onClick={onCreate} variant="primary" />
         </div>
       </div>
 
-      {error && <ErrorBox msg={error} />}
+      <div style={{ marginTop: '1.25rem' }}>{error && <ErrorBox msg={error} />}</div>
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
         <input
-          style={{ ...inputStyle(), flex: '1 1 200px' }}
+          className="lx-input"
+          style={{ flex: '1 1 200px' }}
           placeholder="Suche nach Name, Hostname, Tag…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <select style={{ ...inputStyle(), flex: '0 0 170px' }} value={envFilter} onChange={(e) => setEnvFilter(e.target.value)}>
+        <select className="lx-select" style={{ flex: '0 0 170px' }} value={envFilter} onChange={(e) => setEnvFilter(e.target.value)}>
           <option value="">Alle Umgebungen</option>
           {(catalog?.environments ?? []).map((e) => (
             <option key={e.id} value={e.id}>{e.provider_label ? `${e.provider_label} · ${e.label}` : e.label}</option>
           ))}
         </select>
-        <select style={{ ...inputStyle(), flex: '0 0 140px' }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+        <select className="lx-select" style={{ flex: '0 0 140px' }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
           <option value="">Alle Status</option>
           {statuses.map((s) => (<option key={s.id} value={s.id}>{s.label || s.id}</option>))}
         </select>
-        <select style={{ ...inputStyle(), flex: '0 0 140px' }} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+        <select className="lx-select" style={{ flex: '0 0 140px' }} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
           <option value="">Alle Typen</option>
           {(catalog?.server_types ?? []).map((t) => (<option key={t.id} value={t.id}>{t.label || t.id}</option>))}
         </select>
       </div>
 
       {loading && servers.length === 0 && (
-        <div style={{ color: 'var(--lx-text-muted)', fontSize: '0.875rem', textAlign: 'center', padding: '3rem 0' }}>
-          Lade Server…
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem 0' }}>
+          <span className="lx-spinner" />
         </div>
       )}
 
       {!loading && filtered.length === 0 && (
-        <div style={{ ...cardStyle, padding: '2rem', textAlign: 'center', color: 'var(--lx-text-muted)', fontSize: '0.875rem' }}>
-          Keine Server gefunden.
+        <div className="lx-card lx-empty">
+          <span className="material-icons">dns</span>
+          <p style={{ fontSize: '0.875rem', margin: 0 }}>Keine Server gefunden.</p>
+          <button className="lx-btn lx-btn--secondary lx-btn--sm" style={{ marginTop: 4 }} onClick={onCreate}>
+            <span className="material-icons" style={{ fontSize: 16 }}>add</span>
+            Ersten Server anlegen
+          </button>
         </div>
       )}
 
       {filtered.length > 0 && (
         <div style={cardStyle}>
-          {filtered.map((s) => (
-            <div
-              key={s.id}
-              onClick={() => onEdit(s)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.75rem',
-                padding: '0.6rem 1rem',
-                borderBottom: '1px solid var(--lx-border-soft)',
-                cursor: 'pointer',
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--lx-text)' }}>
-                  {s.name}
-                </div>
-                <div style={{ fontSize: '0.68rem', color: 'var(--lx-text-muted)', fontFamily: 'monospace' }}>
-                  {s.hostname || '—'} · {s.environment_id} · {s.server_type}
-                </div>
-              </div>
-              <StatusBadge status={s.status} statuses={statuses} />
-              {confirmId === s.id ? (
-                <span style={{ display: 'flex', gap: '0.4rem' }} onClick={(e) => e.stopPropagation()}>
-                  <Button label="Wirklich löschen" variant="danger" onClick={() => void doDelete(s.id)} />
-                  <Button label="Abbrechen" onClick={() => setConfirmId(null)} />
-                </span>
-              ) : (
-                <button
-                  onClick={(e) => { e.stopPropagation(); setConfirmId(s.id) }}
-                  title="Löschen"
-                  style={{
-                    background: 'none', border: 'none', cursor: 'pointer',
-                    color: 'var(--lx-state-down)', fontSize: '1rem', lineHeight: 1,
-                    padding: '0.2rem 0.4rem', borderRadius: 'var(--lx-radius-sm)', opacity: 0.7,
-                  }}
-                >
-                  ×
-                </button>
-              )}
-            </div>
-          ))}
+          <table className="lx-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Verbindung</th>
+                <th>Status</th>
+                <th style={{ width: 44 }} aria-label="Aktionen" />
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((s) => (
+                <tr key={s.id} onClick={() => onEdit(s)} style={{ cursor: 'pointer' }}>
+                  <td>
+                    <span style={{ fontWeight: 600, color: 'var(--lx-text)' }}>{s.name}</span>
+                  </td>
+                  <td>
+                    <span className="lx-mono" style={{ fontSize: '0.72rem', color: 'var(--lx-text-muted)' }}>
+                      {s.hostname || '—'} · {s.environment_id} · {s.server_type}
+                    </span>
+                  </td>
+                  <td><StatusBadge status={s.status} statuses={statuses} /></td>
+                  <td style={{ textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                    {confirmId === s.id ? (
+                      <span style={{ display: 'inline-flex', gap: '0.4rem' }}>
+                        <Button label="Löschen" variant="danger" onClick={() => void doDelete(s.id)} />
+                        <Button label="Abbrechen" onClick={() => setConfirmId(null)} />
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmId(s.id)}
+                        title="Löschen"
+                        className="lx-icon-btn lx-icon-btn--danger"
+                      >
+                        <span className="material-icons" style={{ fontSize: 18 }}>delete_outline</span>
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -355,14 +331,14 @@ function SettingsView() {
   return (
     <div style={{ maxWidth: 860, margin: '0 auto', padding: '1.5rem 1.5rem 3rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
-        <a
-          href="#"
-          onClick={(e) => { e.preventDefault(); window.history.back() }}
-          style={{ fontSize: '0.75rem', color: 'var(--lx-text-muted)', textDecoration: 'none' }}
+        <button
+          onClick={() => window.history.back()}
+          className="lx-icon-btn"
+          title="Zurück"
         >
-          ← Zurück
-        </a>
-        <h1 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 700, color: 'var(--lx-text)' }}>
+          <span className="material-icons" style={{ fontSize: 18 }}>arrow_back</span>
+        </button>
+        <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--lx-text)' }}>
           Server Manager — Einstellungen
         </h1>
       </div>
@@ -370,33 +346,33 @@ function SettingsView() {
       {error && <ErrorBox msg={error} />}
       {notice && <NoticeBox msg={notice} />}
 
-      <div style={{ ...cardStyle, padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
-        <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--lx-text)' }}>Katalog-Konfiguration</div>
-        <div style={{ fontSize: '0.72rem', color: 'var(--lx-text-muted)' }}>
+      <div style={{ ...cardStyle, padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.25rem' }}>
+        <div className="lx-section-title">Katalog-Konfiguration</div>
+        <div style={{ fontSize: '0.78rem', color: 'var(--lx-text-muted)', lineHeight: 1.5 }}>
           Verzeichnis mit hardware.yml, environments.yml, profiles.yml, products.yml, settings.yml.
           Leer lassen für den mitgelieferten Standard-Katalog.
         </div>
         <input
-          style={inputStyle()}
+          className="lx-input"
           value={pathInput}
           onChange={(e) => setPathInput(e.target.value)}
           placeholder={catalog?.is_default ? `Standard: ${catalog?.catalog_dir ?? ''}` : ''}
         />
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <Button label="Pfad übernehmen" onClick={() => void applyPath()} disabled={busy} variant="primary" />
-          <Button label="Katalog neu laden" onClick={() => void reload()} disabled={busy} />
+          <Button label="Pfad übernehmen" icon="save" onClick={() => void applyPath()} disabled={busy} variant="primary" />
+          <Button label="Katalog neu laden" icon="refresh" onClick={() => void reload()} disabled={busy} />
         </div>
-        <div style={{ fontSize: '0.68rem', color: 'var(--lx-text-muted)', fontFamily: 'monospace' }}>
+        <div className="lx-mono" style={{ fontSize: '0.7rem', color: 'var(--lx-text-muted)' }}>
           Aktiv: {catalog?.catalog_dir ?? '—'} {catalog?.is_default ? '(Standard)' : ''}
         </div>
       </div>
 
       {/* Catalog stats */}
-      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: '0.75rem' }}>
         {statEntries.map(([key, label]) => (
-          <div key={key} style={{ ...cardStyle, padding: '0.75rem 1rem', minWidth: 110, flex: '1 1 110px' }}>
-            <div style={{ fontSize: '0.68rem', color: 'var(--lx-text-muted)' }}>{label}</div>
-            <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--lx-text)' }}>{stats[key] ?? 0}</div>
+          <div key={key} className="lx-card lx-card-hover" style={{ padding: '0.9rem 1rem' }}>
+            <div style={{ fontSize: '0.7rem', color: 'var(--lx-text-muted)' }}>{label}</div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--lx-text)', marginTop: 2 }}>{stats[key] ?? 0}</div>
           </div>
         ))}
       </div>
@@ -404,13 +380,13 @@ function SettingsView() {
       {/* Products preview */}
       {catalog && catalog.products.length > 0 && (
         <div style={{ ...cardStyle, marginTop: '1.25rem' }}>
-          <div style={{ padding: '0.6rem 1rem', borderBottom: '1px solid var(--lx-border-soft)', background: 'var(--lx-elevated)', fontSize: '0.8rem', fontWeight: 600, color: 'var(--lx-text)' }}>
+          <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--lx-border-soft)', background: 'var(--lx-elevated)' }} className="lx-section-title">
             Produkte
           </div>
           {catalog.products.map((p) => (
-            <div key={p.id} style={{ padding: '0.5rem 1rem', borderBottom: '1px solid var(--lx-border-soft)', fontSize: '0.75rem', color: 'var(--lx-text)' }}>
+            <div key={p.id} style={{ padding: '0.6rem 1rem', borderBottom: '1px solid var(--lx-border-soft)', fontSize: '0.8rem', color: 'var(--lx-text)' }}>
               <span style={{ fontWeight: 600 }}>{p.label}</span>
-              <span style={{ color: 'var(--lx-text-muted)', fontFamily: 'monospace', marginLeft: 6 }}>[{p.id}]</span>
+              <span className="lx-mono" style={{ color: 'var(--lx-text-muted)', marginLeft: 6, fontSize: '0.72rem' }}>[{p.id}]</span>
             </div>
           ))}
         </div>

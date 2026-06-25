@@ -7,20 +7,6 @@ import type {
 
 // ─── Shared styles (var(--lx-*) theme tokens) ───────────────────────────────
 
-function input(): React.CSSProperties {
-  return {
-    width: '100%',
-    padding: '0.4rem 0.6rem',
-    fontSize: '0.8rem',
-    borderRadius: 'var(--lx-radius-sm)',
-    border: '1px solid var(--lx-border-soft)',
-    background: 'var(--lx-elevated)',
-    color: 'var(--lx-text)',
-    outline: 'none',
-    boxSizing: 'border-box',
-  }
-}
-
 const card: React.CSSProperties = {
   background: 'var(--lx-surface)',
   border: '1px solid var(--lx-border-soft)',
@@ -32,11 +18,9 @@ const card: React.CSSProperties = {
 }
 
 const fieldLabel: React.CSSProperties = {
-  fontSize: '0.7rem',
-  fontWeight: 600,
+  fontSize: '0.75rem',
+  fontWeight: 500,
   color: 'var(--lx-text-muted)',
-  textTransform: 'uppercase',
-  letterSpacing: '0.04em',
 }
 
 type TileState = 'normal' | 'selected' | 'disabled' | 'special'
@@ -88,31 +72,21 @@ function Tile({ state, onClick, children, style }: {
   )
 }
 
-function Btn({ label, onClick, disabled, variant = 'default' }: {
+function Btn({ label, onClick, disabled, variant = 'default', icon }: {
   label: string
   onClick?: () => void
   disabled?: boolean
   variant?: 'default' | 'primary' | 'positive'
+  icon?: string
 }) {
-  const accent = variant === 'positive' ? 'var(--lx-state-up)' : 'var(--lx-accent)'
+  const cls =
+    variant === 'default' ? 'lx-btn lx-btn--secondary' : 'lx-btn lx-btn--primary'
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        padding: '0.4rem 0.9rem',
-        fontSize: '0.74rem',
-        fontWeight: 600,
-        border: `1px solid color-mix(in srgb, ${accent} 40%, transparent)`,
-        borderRadius: 'var(--lx-radius-sm)',
-        background: variant === 'default' ? 'var(--lx-surface)' : `color-mix(in srgb, ${accent} 18%, transparent)`,
-        color: disabled ? 'var(--lx-text-muted)' : accent,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.5 : 1,
-      }}
-    >
+    <button type="button" onClick={onClick} disabled={disabled} className={cls}>
+      {icon === 'left' && <span className="material-icons" style={{ fontSize: 16 }}>arrow_back</span>}
       {label}
+      {icon === 'right' && <span className="material-icons" style={{ fontSize: 16 }}>arrow_forward</span>}
+      {icon === 'check' && <span className="material-icons" style={{ fontSize: 16 }}>check</span>}
     </button>
   )
 }
@@ -373,34 +347,49 @@ export default function ServerWizard({ serverId, catalog, onSaved, onCancel }: {
   return (
     <div style={{ maxWidth: 920, margin: '0 auto', padding: '1.25rem 1.5rem 3rem' }}>
       {/* Header + step bar */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
-        <a href="#" onClick={(e) => { e.preventDefault(); onCancel() }} style={{ fontSize: '0.75rem', color: 'var(--lx-text-muted)', textDecoration: 'none' }}>← Zurück</a>
-        <h1 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: 'var(--lx-text)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
+        <button onClick={onCancel} className="lx-icon-btn" title="Zurück">
+          <span className="material-icons" style={{ fontSize: 18 }}>arrow_back</span>
+        </button>
+        <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--lx-text)' }}>
           {isEdit ? `Bearbeiten: ${form.name}` : 'Neuen Server anlegen'}
         </h1>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.25rem' }}>
-        {STEP_LABELS.map((lbl, i) => (
-          <React.Fragment key={lbl}>
-            <div
-              onClick={() => setStep(i)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
-                fontSize: '0.74rem', fontWeight: 600,
-                color: i === step ? 'var(--lx-accent)' : i < step ? 'var(--lx-state-up)' : 'var(--lx-text-muted)',
-              }}
-            >
-              <span style={{
-                width: 18, height: 18, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '0.65rem',
-                border: `1px solid ${i === step ? 'var(--lx-accent)' : i < step ? 'var(--lx-state-up)' : 'var(--lx-border-soft)'}`,
-              }}>{i < step ? '✓' : i + 1}</span>
-              {lbl}
-            </div>
-            {i < STEP_LABELS.length - 1 && <div style={{ flex: 1, height: 1, background: 'var(--lx-border-soft)' }} />}
-          </React.Fragment>
-        ))}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem' }}>
+        {STEP_LABELS.map((lbl, i) => {
+          const active = i === step
+          const done = i < step
+          const accent = active ? 'var(--lx-accent)' : done ? 'var(--lx-state-up)' : 'var(--lx-text-muted)'
+          return (
+            <React.Fragment key={lbl}>
+              <div
+                onClick={() => setStep(i)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+                  fontSize: '0.8rem', fontWeight: 600, color: accent,
+                }}
+              >
+                <span style={{
+                  width: 26, height: 26, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '0.78rem', fontWeight: 700,
+                  color: active ? 'var(--lx-bg)' : done ? 'var(--lx-state-up)' : 'var(--lx-text-muted)',
+                  background: active
+                    ? 'var(--lx-accent)'
+                    : done ? 'color-mix(in srgb, var(--lx-state-up) 16%, transparent)' : 'var(--lx-elevated)',
+                  border: `1px solid ${active ? 'var(--lx-accent)' : done ? 'color-mix(in srgb, var(--lx-state-up) 40%, transparent)' : 'var(--lx-border-soft)'}`,
+                  transition: 'all 0.15s',
+                }}>
+                  {done ? <span className="material-icons" style={{ fontSize: 16 }}>check</span> : i + 1}
+                </span>
+                <span style={{ display: window.innerWidth < 560 ? 'none' : 'inline' }}>{lbl}</span>
+              </div>
+              {i < STEP_LABELS.length - 1 && (
+                <div style={{ flex: 1, height: 2, borderRadius: 2, background: done ? 'color-mix(in srgb, var(--lx-state-up) 40%, transparent)' : 'var(--lx-border-soft)' }} />
+              )}
+            </React.Fragment>
+          )
+        })}
       </div>
 
       {error && (
@@ -429,11 +418,11 @@ export default function ServerWizard({ serverId, catalog, onSaved, onCancel }: {
       )}
 
       {/* Nav */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1.5rem' }}>
-        <Btn label="← Zurück" onClick={() => (step === 0 ? onCancel() : setStep(step - 1))} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1.75rem', paddingTop: '1.25rem', borderTop: '1px solid var(--lx-border-soft)' }}>
+        <Btn label={step === 0 ? 'Abbrechen' : 'Zurück'} icon={step === 0 ? undefined : 'left'} onClick={() => (step === 0 ? onCancel() : setStep(step - 1))} />
         {step < 2
-          ? <Btn label="Weiter →" variant="primary" onClick={() => setStep(step + 1)} disabled={step === 0 && (!form.name.trim() || !form.environment_id || !form.server_type)} />
-          : <Btn label={isEdit ? 'Speichern' : 'Anlegen'} variant="positive" onClick={() => void save()} disabled={busy || hasError || !form.name.trim() || !form.environment_id || !form.server_type} />}
+          ? <Btn label="Weiter" icon="right" variant="primary" onClick={() => setStep(step + 1)} disabled={step === 0 && (!form.name.trim() || !form.environment_id || !form.server_type)} />
+          : <Btn label={isEdit ? 'Speichern' : 'Anlegen'} icon="check" variant="primary" onClick={() => void save()} disabled={busy || hasError || !form.name.trim() || !form.environment_id || !form.server_type} />}
       </div>
     </div>
   )
@@ -468,11 +457,11 @@ function Step1({
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <div style={{ flex: '1 1 220px', display: 'flex', flexDirection: 'column', gap: 3 }}>
             <label style={fieldLabel}>Server-Name *</label>
-            <input style={input()} value={form.name} onChange={(e) => setField('name', e.target.value)} placeholder="srv-app-01" />
+            <input className="lx-input" value={form.name} onChange={(e) => setField('name', e.target.value)} placeholder="srv-app-01" />
           </div>
           <div style={{ flex: '1 1 220px', display: 'flex', flexDirection: 'column', gap: 3 }}>
             <label style={fieldLabel}>Hostname</label>
-            <input style={input()} value={form.hostname} onChange={(e) => setField('hostname', e.target.value)} placeholder="srv-app-01.example.com" />
+            <input className="lx-input" value={form.hostname} onChange={(e) => setField('hostname', e.target.value)} placeholder="srv-app-01.example.com" />
           </div>
         </div>
       </div>
@@ -625,18 +614,18 @@ function Step1({
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <div style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', gap: 3 }}>
             <label style={fieldLabel}>Status</label>
-            <select style={input()} value={form.status} onChange={(e) => setField('status', e.target.value)}>
+            <select className="lx-select" value={form.status} onChange={(e) => setField('status', e.target.value)}>
               {catalog.statuses.map((s) => (<option key={s.id} value={s.id}>{s.label || s.id}</option>))}
             </select>
           </div>
           <div style={{ flex: '2 1 240px', display: 'flex', flexDirection: 'column', gap: 3 }}>
             <label style={fieldLabel}>Tags (kommagetrennt)</label>
-            <input style={input()} value={form.tags} onChange={(e) => setField('tags', e.target.value)} placeholder="prod, db, critical" />
+            <input className="lx-input" value={form.tags} onChange={(e) => setField('tags', e.target.value)} placeholder="prod, db, critical" />
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           <label style={fieldLabel}>Notizen</label>
-          <textarea style={{ ...input(), minHeight: 60, resize: 'vertical', fontFamily: 'inherit' }} value={form.notes} onChange={(e) => setField('notes', e.target.value)} />
+          <textarea className="lx-textarea" style={{ minHeight: 60, resize: 'vertical' }} value={form.notes} onChange={(e) => setField('notes', e.target.value)} />
         </div>
       </div>
     </div>
@@ -746,7 +735,7 @@ function PhysicalHw({ catalog, form, setForm, allowedCpu, ramSteps, socketOption
           ))}
           <input
             type="number" min={1} max={ramManualMax} step={16}
-            style={{ ...input(), width: 110 }}
+            className="lx-input" style={{ width: 110 }}
             placeholder="manuell GB"
             value={form.ram_gb ?? ''}
             onChange={(e) => setForm((f) => ({ ...f, ram_gb: e.target.value ? parseInt(e.target.value, 10) : null }))}
@@ -860,7 +849,7 @@ function VirtualHw({ form, setForm, selectedProduct, ramSteps, vcpuTiles, ramMan
           {vcpuTileValues.map((v) => (
             <Tile key={v} state={vcpuState(v)} onClick={() => setForm((f) => ({ ...f, vcpu_count: f.vcpu_count === v ? null : v }))} style={{ minWidth: 48, alignItems: 'center' }}>{v}</Tile>
           ))}
-          <input type="number" min={1} max={512} step={1} style={{ ...input(), width: 90 }} placeholder="vCPU"
+          <input type="number" min={1} max={512} step={1} className="lx-input" style={{ width: 90 }} placeholder="vCPU"
             value={form.vcpu_count ?? ''} onChange={(e) => setForm((f) => ({ ...f, vcpu_count: e.target.value ? parseInt(e.target.value, 10) : null }))} />
         </div>
       </div>
@@ -872,7 +861,7 @@ function VirtualHw({ form, setForm, selectedProduct, ramSteps, vcpuTiles, ramMan
             const lbl = gb >= 1000 && gb % 1000 === 0 ? `${gb / 1000} TB` : `${gb} GB`
             return <Tile key={gb} state={ramState(gb)} onClick={() => setForm((f) => ({ ...f, ram_gb: f.ram_gb === gb ? null : gb }))} style={{ minWidth: 56, alignItems: 'center' }}>{lbl}</Tile>
           })}
-          <input type="number" min={1} max={ramManualMax} step={ramStep || 1} style={{ ...input(), width: 110 }} placeholder="manuell GB"
+          <input type="number" min={1} max={ramManualMax} step={ramStep || 1} className="lx-input" style={{ width: 110 }} placeholder="manuell GB"
             value={form.ram_gb ?? ''} onChange={(e) => setForm((f) => ({ ...f, ram_gb: e.target.value ? parseInt(e.target.value, 10) : null }))} />
         </div>
         {comboHint && form.vcpu_count && form.ram_gb && (
@@ -965,14 +954,14 @@ function StorageSection({ form, setForm, storageOptions, multiStorage, storageMa
           )}
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <input
-              style={{ ...input(), flex: '1 1 160px' }}
+              className="lx-input" style={{ flex: '1 1 160px' }}
               placeholder={isWindows ? 'C:\\ oder D:\\' : '/ oder /data'}
               value={entry.mount}
               onChange={(e) => updateLine(idx, { mount: e.target.value })}
             />
             <input
               type="number" min={1} max={storageManualMax} step={10}
-              style={{ ...input(), width: 130 }}
+              className="lx-input" style={{ width: 130 }}
               placeholder="GB"
               value={entry.size_gb || ''}
               onChange={(e) => updateLine(idx, { size_gb: e.target.value ? parseInt(e.target.value, 10) : 0 })}
