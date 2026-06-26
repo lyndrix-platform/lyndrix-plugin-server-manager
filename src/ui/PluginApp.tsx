@@ -106,10 +106,23 @@ function useCatalog() {
 
 // ─── Server list ────────────────────────────────────────────────────────────
 
+// In-SPA navigation the shell's BrowserRouter picks up — NOT a full page reload.
+// A full reload cold-loads the SPA before dynamic plugin routes register and
+// bounces to the dashboard / stalls.
+function spaNavigate(path: string) {
+  window.history.pushState({}, '', path)
+  window.dispatchEvent(new PopStateEvent('popstate'))
+}
+
 function goSettings() {
   const p = window.location.pathname.replace(/\/+$/, '')
   const target = p.endsWith('/server-manager') ? `${p}/settings` : `${p}/server-manager/settings`
-  window.location.assign(target)
+  spaNavigate(target)
+}
+
+function goBack() {
+  const p = window.location.pathname.replace(/\/+$/, '')
+  spaNavigate(p.endsWith('/settings') ? p.slice(0, -'/settings'.length) : p)
 }
 
 function ServerListView({
@@ -339,7 +352,7 @@ function SettingsView() {
     <div style={{ maxWidth: 860, margin: '0 auto', padding: '1.5rem 1.5rem 3rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
         <button
-          onClick={() => window.history.back()}
+          onClick={goBack}
           className="lx-icon-btn"
           title="Zurück"
         >
