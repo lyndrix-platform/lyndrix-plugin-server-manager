@@ -68,8 +68,9 @@ export LYNDRIX_ADMIN_PASSWORD=$(grep -E '^LYNDRIX_ADMIN_PASSWORD=' ../lyndrix-co
 Output (verified):
 
 ```
-core_version=0.1.3 api_version=1.2.0 plugins=5
+core_version=0.2.2 api_version=1.2.0 plugins=6
 login: ok
+shot: /tmp/sm-shots/login.desktop.png
 shot: /tmp/sm-shots/server-manager.desktop.png
 wrote 2 screenshots to /tmp/sm-shots/
 ```
@@ -78,6 +79,27 @@ wrote 2 screenshots to /tmp/sm-shots/
 (Total Servers / Staging KPI cards, search + filters, **Add Server**, and the server
 inventory cards). Useful flags: `--health-only` (no browser), `--routes /server-manager`
 (explicit), `--base/--user/--password` overrides. Drop `--no-mobile` for a 390px shot too.
+
+## Run (React bundle) — the lyndrix-ui shell
+
+The plugin also ships a **React bundle** (`src/ui/PluginApp.tsx` → built to
+`ui_static/ui_bundle.js`) that renders inside the **lyndrix-ui** shell (Vite dev
+server on `:5173`), in addition to the NiceGUI page above. Drive it with the sibling
+**run-lyndrix-ui** driver. The route is `/apps/<safeId>/server-manager`, where
+`safeId` is the plugin id with dots→dashes: `lyndrix.plugin.server_manager` →
+**`lyndrix-plugin-server_manager`** (the underscore stays — an all-dashes spelling
+bounces to the dashboard):
+
+```bash
+UI=../lyndrix-ui/.claude/skills/run-lyndrix-ui/driver.mjs
+node "$UI" /apps/lyndrix-plugin-server_manager/server-manager          /tmp/sm-react.png
+node "$UI" /apps/lyndrix-plugin-server_manager/server-manager/settings /tmp/sm-react-settings.png
+```
+
+Verified: the React main-view header carries **Aktualisieren · + Server · Settings**;
+the **Settings** button navigates to `/server-manager/settings`, which renders
+"Server Manager — Einstellungen" (Katalog-Konfiguration + CPU/RAM/Storage/Profile/
+Produkte counts) with a back arrow.
 
 ## Gotchas
 
@@ -93,6 +115,11 @@ inventory cards). Useful flags: `--health-only` (no browser), `--routes /server-
   screenshot that shows the login page = the retry still lost the race; just re-run.
 - **Shared venv lives in core.** `../lyndrix-core/.dev/run-venv` — this plugin repo has
   no venv of its own. `chromium-cli` is intentionally not used (absent on this host).
+- **React-route safeId keeps underscores.** The shell builds plugin routes as
+  `plugin.id.replace(/\./g,'-')`, so `lyndrix.plugin.server_manager` →
+  `/apps/lyndrix-plugin-server_manager/...`. Spelling it `...server-manager` (all
+  dashes) is an unknown route that silently lands on the **dashboard**, not the plugin —
+  the screenshot looks like a login worked but shows the wrong page.
 
 ## Test
 
