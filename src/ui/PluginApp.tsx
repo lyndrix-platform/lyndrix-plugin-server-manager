@@ -106,6 +106,12 @@ function useCatalog() {
 
 // ─── Server list ────────────────────────────────────────────────────────────
 
+function goSettings() {
+  const p = window.location.pathname.replace(/\/+$/, '')
+  const target = p.endsWith('/server-manager') ? `${p}/settings` : `${p}/server-manager/settings`
+  window.location.assign(target)
+}
+
 function ServerListView({
   onCreate, onEdit,
 }: {
@@ -177,6 +183,7 @@ function ServerListView({
         <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
           <Button label="Aktualisieren" icon="refresh" onClick={() => void load()} disabled={loading} />
           <Button label="Server" icon="add" onClick={onCreate} variant="primary" />
+          <Button label="Settings" icon="settings" onClick={goSettings} />
         </div>
       </div>
 
