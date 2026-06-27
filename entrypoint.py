@@ -29,6 +29,10 @@ from nicegui import ui
 
 from core.api import ModuleManifest, db_instance
 
+# TODO(agent): `main_layout` lives in core's internal `ui.layout`, not in the
+# stable `core.api` surface — re-export it from core.api (or drop this NiceGUI
+# page in favour of the React UI). The fallback below keeps the page working if
+# the internal import ever disappears.
 try:
     from ui.layout import main_layout
 except ImportError:
@@ -48,7 +52,7 @@ from .app.ui.page import render_server_manager_page
 manifest = ModuleManifest(
     id="lyndrix.plugin.server_manager",
     name="Server Manager",
-    version="0.1.0",
+    version="0.2.0",
     description=(
         "Central server inventory with configurable hardware catalogs, "
         "combination rules, and event-bus hooks for downstream order workflows."
@@ -84,7 +88,6 @@ manifest = ModuleManifest(
             "server_manager:server_deleted",
             "server_manager:hardware_changed",
             "server_manager:status_changed",
-            "messaging:outbound",
         ],
     },
 )

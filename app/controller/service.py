@@ -15,9 +15,11 @@ and inspect environment_id / old_profile / new_profile to decide what to do.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from sqlalchemy import select
 
-from core.logger import get_logger
+from core.api import get_logger
 
 from ..model.catalog import CatalogLoader
 from ..model.database import get_session, ensure_tables
@@ -61,7 +63,6 @@ class ServerManagerService:
     # ── Catalog ──────────────────────────────────────────────────────────────
 
     def set_catalog_dir(self, path: str) -> None:
-        from pathlib import Path
         self.catalog.catalog_dir = Path(path)
 
     def reload_catalog(self) -> None:

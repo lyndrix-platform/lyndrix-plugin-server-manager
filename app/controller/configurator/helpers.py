@@ -20,6 +20,9 @@ def _val(args) -> str:
 
 
 def _unpack_profile(profile: dict) -> dict:
+    # TODO(agent): pass the hardware accessor in instead of reaching back into the
+    # service singleton — the local import here only exists to dodge a circular
+    # import (helpers ← service ← configurator ← helpers).
     from ..service import server_manager_service as _svc  # local import to avoid circular
     # Migrate legacy ram_modules → total ram_gb
     ram_gb = profile.get("ram_gb")

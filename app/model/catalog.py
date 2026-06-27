@@ -38,17 +38,109 @@ Constraint rule types
 """
 from __future__ import annotations
 
+import ast
 import json
+import operator
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
-from core.logger import get_logger
+from core.api import get_logger
 
 log = get_logger("Plugin:ServerManager:Catalog")
 
 _DEFAULT_CATALOG_DIR = Path(__file__).parent.parent.parent / "catalog"
+
+
+# ── Safe expression evaluator (legacy combination_rules) ───────────────────────
+#
+# Legacy hardware combination_rules carry a free-text boolean `rule:` expression
+# (e.g. "ram_total_gb == 0"). These used to be evaluated with `eval()` and an
+# emptied `__builtins__`, which is NOT a real sandbox — attribute-walk escapes
+# such as ``().__class__.__bases__[0].__subclasses__()`` need no builtins and
+# yield arbitrary code execution. Since the catalog directory is operator
+# selectable at runtime, the expression string is not a trusted constant.
+#
+# This evaluator walks the AST and permits only a fixed allowlist of node types
+# and operators — no attribute access, no calls, no comprehensions — so a
+# malicious expression can at worst raise, never execute code.
+
+_SAFE_BIN_OPS: dict[type, Callable[[Any, Any], Any]] = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+}
+_SAFE_CMP_OPS: dict[type, Callable[[Any, Any], Any]] = {
+    ast.Eq: operator.eq,
+    ast.NotEq: operator.ne,
+    ast.Lt: operator.lt,
+    ast.LtE: operator.le,
+    ast.Gt: operator.gt,
+    ast.GtE: operator.ge,
+    ast.In: lambda a, b: a in b,
+    ast.NotIn: lambda a, b: a not in b,
+}
+_SAFE_UNARY_OPS: dict[type, Callable[[Any], Any]] = {
+    ast.Not: operator.not_,
+    ast.USub: operator.neg,
+    ast.UAdd: operator.pos,
+}
+
+
+class _SafeExprError(ValueError):
+    """Raised when a rule expression contains a disallowed construct."""
+
+
+def _safe_eval_node(node: ast.AST, names: dict[str, Any]) -> Any:
+    if isinstance(node, ast.Expression):
+        return _safe_eval_node(node.body, names)
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name):
+        if node.id in names:
+            return names[node.id]
+        raise _SafeExprError(f"Unknown name: {node.id}")
+    if isinstance(node, ast.BoolOp):
+        values = [_safe_eval_node(v, names) for v in node.values]
+        return all(values) if isinstance(node.op, ast.And) else any(values)
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_UNARY_OPS:
+        return _SAFE_UNARY_OPS[type(node.op)](_safe_eval_node(node.operand, names))
+    if isinstance(node, ast.BinOp) and type(node.op) in _SAFE_BIN_OPS:
+        return _SAFE_BIN_OPS[type(node.op)](
+            _safe_eval_node(node.left, names), _safe_eval_node(node.right, names)
+        )
+    if isinstance(node, ast.Compare):
+        left = _safe_eval_node(node.left, names)
+        for op, comparator in zip(node.ops, node.comparators):
+            op_type = type(op)
+            if op_type not in _SAFE_CMP_OPS:
+                raise _SafeExprError(f"Operator not allowed: {op_type.__name__}")
+            right = _safe_eval_node(comparator, names)
+            if not _SAFE_CMP_OPS[op_type](left, right):
+                return False
+            left = right
+        return True
+    if isinstance(node, ast.Subscript):
+        container = _safe_eval_node(node.value, names)
+        key = _safe_eval_node(node.slice, names)
+        try:
+            return container[key]
+        except (KeyError, IndexError, TypeError):
+            return None
+    if isinstance(node, (ast.List, ast.Tuple)):
+        return [_safe_eval_node(e, names) for e in node.elts]
+    raise _SafeExprError(f"Disallowed expression element: {type(node).__name__}")
+
+
+def safe_eval_bool(expr: str, names: dict[str, Any]) -> bool:
+    """Evaluate a boolean combination-rule expression in a hardened AST sandbox."""
+    tree = ast.parse(expr, mode="eval")
+    return bool(_safe_eval_node(tree, names))
 
 
 # ── Hardware Catalog ─────────────────────────────────────────────────────────
@@ -117,7 +209,9 @@ class HardwareCatalog:
                 continue
             for field in rule.get("required_fields", []):
                 val = profile.get(field)
-                if val is None or val == "" or val == [] or val == 0:
+                # A literal 0 is a legitimate value, not "missing" — only None,
+                # empty string and empty list count as absent here.
+                if val is None or val == "" or val == []:
                     issues.append({
                         "rule_id": rule["id"],
                         "severity": rule.get("severity", "error"),
@@ -167,7 +261,10 @@ class HardwareCatalog:
             for d in storage_disks
         ) or int(profile.get("storage_gb") or 0)
         try:
-            return bool(eval(expr, {"__builtins__": {}}, ctx))  # noqa: S307
+            return safe_eval_bool(expr, ctx)
+        except _SafeExprError as exc:
+            log.warning(f"Catalog: rejected unsafe rule expression '{expr}': {exc}")
+            return False
         except Exception as exc:
             log.debug(f"Catalog: expr eval error '{expr}': {exc}")
             return False
@@ -514,8 +611,11 @@ class ConstraintEngine:
         """Return a list of constraint violations: [{rule_id, severity, message}]."""
         issues: list[dict] = []
 
-        # Make product context available to v2 rule handlers (vcpu_ram_matrix, ...)
-        self._ctx = {
+        # Per-call product context for the v2 rule handlers (vcpu_ram_matrix, ...).
+        # Passed explicitly through the dispatch chain rather than stored on the
+        # instance, so concurrent validate() calls on the shared cached engine
+        # cannot clobber each other's context once offloaded to worker threads.
+        ctx = {
             "product_id": product_id,
             "product_catalog": product_catalog,
             "os_family": (hardware_profile or {}).get("os_family_id"),
@@ -532,7 +632,7 @@ class ConstraintEngine:
             applies_to_os = rule.get("applies_to_os")
             if applies_to_os and os_type and os_type not in applies_to_os:
                 continue
-            issues.extend(self._eval(rule, server_type, hardware_profile, os_type))
+            issues.extend(self._eval(rule, server_type, hardware_profile, os_type, ctx))
 
         # 3. Product rules
         if product_id:
@@ -540,7 +640,7 @@ class ConstraintEngine:
                 applies_to_types = rule.get("applies_to_types")
                 if applies_to_types and server_type not in applies_to_types:
                     continue
-                issues.extend(self._eval(rule, server_type, hardware_profile, os_type))
+                issues.extend(self._eval(rule, server_type, hardware_profile, os_type, ctx))
 
         return issues
 
@@ -552,6 +652,7 @@ class ConstraintEngine:
         server_type: str,
         profile: dict,
         os_type: str | None,
+        ctx: dict,
     ) -> list[dict]:
         rule_type = rule.get("type", "")
         handler = {
@@ -572,7 +673,7 @@ class ConstraintEngine:
             "ram_special_max":       self._rule_ram_special_max,
         }.get(rule_type)
         if handler:
-            return handler(rule, server_type, profile, os_type)
+            return handler(rule, server_type, profile, os_type, ctx)
         return []
 
     def _issue(self, rule: dict, message: str) -> dict:
@@ -585,7 +686,7 @@ class ConstraintEngine:
     # ── Profile rule handlers ─────────────────────────────────────────────────
 
     def _rule_cores_ram_ratio(
-        self, rule: dict, server_type: str, profile: dict, _os: str | None
+        self, rule: dict, server_type: str, profile: dict, _os: str | None, ctx: dict
     ) -> list[dict]:
         """Physical: total cores constrains RAM range."""
         if server_type != "physical":
@@ -618,7 +719,7 @@ class ConstraintEngine:
         return []
 
     def _rule_ram_module_parity(
-        self, rule: dict, server_type: str, profile: dict, _os: str | None
+        self, rule: dict, server_type: str, profile: dict, _os: str | None, ctx: dict
     ) -> list[dict]:
         modulus = int(rule.get("modulus", 2))
         total_modules = sum(m.get("count", 1) for m in (profile.get("ram_modules") or []))
@@ -629,7 +730,7 @@ class ConstraintEngine:
         return []
 
     def _rule_storage_count_limit(
-        self, rule: dict, server_type: str, profile: dict, _os: str | None
+        self, rule: dict, server_type: str, profile: dict, _os: str | None, ctx: dict
     ) -> list[dict]:
         max_count = int(rule.get("max_count", 8))
         if server_type == "physical":
@@ -647,7 +748,7 @@ class ConstraintEngine:
         return []
 
     def _rule_vcpu_ram_ratio(
-        self, rule: dict, server_type: str, profile: dict, _os: str | None
+        self, rule: dict, server_type: str, profile: dict, _os: str | None, ctx: dict
     ) -> list[dict]:
         vcpu_count = profile.get("vcpu_count") or 0
         ram_gb = profile.get("ram_gb") or 0
@@ -669,7 +770,7 @@ class ConstraintEngine:
         return []
 
     def _rule_os_storage_limit(
-        self, rule: dict, server_type: str, profile: dict, os_type: str | None
+        self, rule: dict, server_type: str, profile: dict, os_type: str | None, ctx: dict
     ) -> list[dict]:
         applies_to_os = rule.get("applies_to_os", [])
         if applies_to_os and os_type not in applies_to_os:
@@ -698,7 +799,7 @@ class ConstraintEngine:
     # ── Product rule handlers ─────────────────────────────────────────────────
 
     def _rule_ram_total_minimum(
-        self, rule: dict, server_type: str, profile: dict, _os: str | None
+        self, rule: dict, server_type: str, profile: dict, _os: str | None, ctx: dict
     ) -> list[dict]:
         min_gb = rule.get("ram_gb_min", 0)
         actual = self._ram_total_gb(profile) if server_type == "physical" else (profile.get("ram_gb") or 0)
@@ -708,7 +809,7 @@ class ConstraintEngine:
         return []
 
     def _rule_ram_total_maximum(
-        self, rule: dict, server_type: str, profile: dict, _os: str | None
+        self, rule: dict, server_type: str, profile: dict, _os: str | None, ctx: dict
     ) -> list[dict]:
         max_gb = rule.get("ram_gb_max", 0)
         actual = self._ram_total_gb(profile) if server_type == "physical" else (profile.get("ram_gb") or 0)
@@ -718,7 +819,7 @@ class ConstraintEngine:
         return []
 
     def _rule_cpu_count_minimum(
-        self, rule: dict, server_type: str, profile: dict, _os: str | None
+        self, rule: dict, server_type: str, profile: dict, _os: str | None, ctx: dict
     ) -> list[dict]:
         min_count = rule.get("count_min", 1)
         actual = int(profile.get("cpu_count") or 1) if server_type == "physical" else int(profile.get("vcpu_count") or 0)
@@ -729,7 +830,7 @@ class ConstraintEngine:
         return []
 
     def _rule_cpu_count_maximum(
-        self, rule: dict, server_type: str, profile: dict, _os: str | None
+        self, rule: dict, server_type: str, profile: dict, _os: str | None, ctx: dict
     ) -> list[dict]:
         max_count = rule.get("count_max", 9999)
         actual = int(profile.get("cpu_count") or 1) if server_type == "physical" else int(profile.get("vcpu_count") or 0)
@@ -740,7 +841,7 @@ class ConstraintEngine:
         return []
 
     def _rule_storage_total_minimum(
-        self, rule: dict, server_type: str, profile: dict, _os: str | None
+        self, rule: dict, server_type: str, profile: dict, _os: str | None, ctx: dict
     ) -> list[dict]:
         min_gb = rule.get("storage_gb_min", 0)
         actual = self._storage_total_gb(profile)
@@ -751,7 +852,7 @@ class ConstraintEngine:
         return []
 
     def _rule_storage_total_maximum(
-        self, rule: dict, server_type: str, profile: dict, _os: str | None
+        self, rule: dict, server_type: str, profile: dict, _os: str | None, ctx: dict
     ) -> list[dict]:
         max_gb = rule.get("storage_gb_max", 0)
         actual = self._storage_total_gb(profile)
@@ -762,7 +863,7 @@ class ConstraintEngine:
         return []
 
     def _rule_storage_size_minimum(
-        self, rule: dict, server_type: str, profile: dict, _os: str | None
+        self, rule: dict, server_type: str, profile: dict, _os: str | None, ctx: dict
     ) -> list[dict]:
         min_gb = rule.get("size_gb_min", 0)
         if server_type != "physical":
@@ -780,10 +881,10 @@ class ConstraintEngine:
     # ── v2 product-matrix rule handlers ───────────────────────────────────────
 
     def _rule_vcpu_ram_matrix(
-        self, rule: dict, server_type: str, profile: dict, _os: str | None
+        self, rule: dict, server_type: str, profile: dict, _os: str | None, ctx: dict
     ) -> list[dict]:
         """Validate (vCPU, OS-family, RAM) against the product's vcpu_ram_matrix."""
-        ctx = getattr(self, "_ctx", {}) or {}
+        ctx = ctx or {}
         product_id = ctx.get("product_id")
         pcat: ProductCatalog | None = ctx.get("product_catalog")
         os_family = ctx.get("os_family")
@@ -805,9 +906,9 @@ class ConstraintEngine:
         return []
 
     def _rule_ram_step_check(
-        self, rule: dict, server_type: str, profile: dict, _os: str | None
+        self, rule: dict, server_type: str, profile: dict, _os: str | None, ctx: dict
     ) -> list[dict]:
-        ctx = getattr(self, "_ctx", {}) or {}
+        ctx = ctx or {}
         product_id = ctx.get("product_id")
         pcat: ProductCatalog | None = ctx.get("product_catalog")
         if not (product_id and pcat):
@@ -822,9 +923,9 @@ class ConstraintEngine:
         return []
 
     def _rule_ram_special_max(
-        self, rule: dict, server_type: str, profile: dict, _os: str | None
+        self, rule: dict, server_type: str, profile: dict, _os: str | None, ctx: dict
     ) -> list[dict]:
-        ctx = getattr(self, "_ctx", {}) or {}
+        ctx = ctx or {}
         product_id = ctx.get("product_id")
         pcat: ProductCatalog | None = ctx.get("product_catalog")
         if not (product_id and pcat):

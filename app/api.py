@@ -15,6 +15,7 @@ React bundle. ``ServerRecord.to_dict()`` is the JSON shape returned for servers;
 """
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +26,25 @@ from core.api import ApiIdentity, require_permission
 
 from .controller.service import ServerManagerService
 from .model.catalog import _DEFAULT_CATALOG_DIR
+
+# Catalog re-homing is restricted to directories inside the plugin install root
+# (where the shipped catalog/ and examples/ dirs live). This blocks both
+# arbitrary host file reads and path traversal that could feed attacker
+# controlled YAML into the rule engine.
+_CATALOG_ALLOWED_ROOT = _DEFAULT_CATALOG_DIR.parent.resolve()
+
+
+def _resolve_catalog_dir(raw: str) -> Path:
+    """Validate an operator-supplied catalog path against the allowlisted root."""
+    candidate = Path(raw).resolve()
+    if candidate != _CATALOG_ALLOWED_ROOT and _CATALOG_ALLOWED_ROOT not in candidate.parents:
+        raise HTTPException(
+            status_code=400,
+            detail="Catalog directory must be inside the plugin install root.",
+        )
+    if not candidate.is_dir():
+        raise HTTPException(status_code=400, detail=f"Directory not found: {raw}")
+    return candidate
 
 
 # ── Payloads ───────────────────────────────────────────────────────────────────
@@ -242,20 +262,35 @@ def _catalog_payload(service: ServerManagerService) -> dict:
 # ── Router ──────────────────────────────────────────────────────────────────────
 
 def build_plugin_router(service: ServerManagerService) -> APIRouter:
-    """The single Server Manager router — core mounts it at /api/plugins/<id>/."""
+    """The single Server Manager router — core mounts it at /api/plugins/<id>/.
+
+    Every handler performs blocking work (synchronous SQLAlchemy sessions and
+    YAML catalog file reads) off the event loop via ``asyncio.to_thread`` so the
+    shared NiceGUI/FastAPI loop is never stalled under concurrent load.
+    """
     router = APIRouter(tags=["Server Manager"])
+
+    def _ensure_ready() -> None:
+        """Short-circuit DB-backed routes to a retryable 503 during boot/reconnect."""
+        if not service.is_ready:
+            raise HTTPException(
+                status_code=503,
+                detail="Server Manager database not ready — retry shortly.",
+            )
 
     # ── Servers (CRUD) ─────────────────────────────────────────────────────────
     @router.get("/servers")
     async def list_servers(identity: ApiIdentity = Depends(require_permission("api:read"))):
-        return {"servers": service.get_all_servers()}
+        _ensure_ready()
+        return {"servers": await asyncio.to_thread(service.get_all_servers)}
 
     @router.get("/servers/{server_id}")
     async def get_server(
         server_id: int,
         identity: ApiIdentity = Depends(require_permission("api:read")),
     ):
-        server = service.get_server(server_id)
+        _ensure_ready()
+        server = await asyncio.to_thread(service.get_server, server_id)
         if server is None:
             raise HTTPException(status_code=404, detail=f"Unknown server id: {server_id}")
         return {"server": server}
@@ -265,8 +300,9 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
         payload: ServerCreatePayload,
         identity: ApiIdentity = Depends(require_permission("api:write")),
     ):
+        _ensure_ready()
         try:
-            server = service.create_server(payload.model_dump())
+            server = await asyncio.to_thread(service.create_server, payload.model_dump())
             return {"server": server}
         except KeyError as exc:
             raise HTTPException(status_code=400, detail=f"Missing field: {exc}") from exc
@@ -279,8 +315,9 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
         payload: ServerUpdatePayload,
         identity: ApiIdentity = Depends(require_permission("api:write")),
     ):
+        _ensure_ready()
         data = payload.model_dump(exclude_unset=True)
-        server = service.update_server(server_id, data)
+        server = await asyncio.to_thread(service.update_server, server_id, data)
         if server is None:
             raise HTTPException(status_code=404, detail=f"Unknown server id: {server_id}")
         return {"server": server}
@@ -290,18 +327,20 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
         server_id: int,
         identity: ApiIdentity = Depends(require_permission("api:write")),
     ):
-        if not service.delete_server(server_id):
+        _ensure_ready()
+        if not await asyncio.to_thread(service.delete_server, server_id):
             raise HTTPException(status_code=404, detail=f"Unknown server id: {server_id}")
         return {"ok": True}
 
     # ── Statuses / Stats ───────────────────────────────────────────────────────
     @router.get("/statuses")
     async def list_statuses(identity: ApiIdentity = Depends(require_permission("api:read"))):
-        return {"statuses": service.get_all_statuses()}
+        return {"statuses": await asyncio.to_thread(service.get_all_statuses)}
 
     @router.get("/stats")
     async def stats(identity: ApiIdentity = Depends(require_permission("api:read"))):
-        return service.get_stats()
+        _ensure_ready()
+        return await asyncio.to_thread(service.get_stats)
 
     # ── Validation ─────────────────────────────────────────────────────────────
     @router.post("/validate")
@@ -309,9 +348,10 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
         payload: ValidatePayload,
         identity: ApiIdentity = Depends(require_permission("api:read")),
     ):
-        issues = service.validate_server(
-            server_type=payload.server_type,
-            profile=payload.profile,
+        issues = await asyncio.to_thread(
+            service.validate_server,
+            payload.server_type,
+            payload.profile,
             profile_id=payload.profile_id,
             product_id=payload.product_id,
             environment_id=payload.environment_id,
@@ -331,36 +371,45 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
         generation, alt_platform}. The React step-2 tiles call this (debounced)
         instead of re-deriving the matrix client-side.
         """
-        return service.catalog.products().evaluate_combo(
-            payload.product_id,
-            payload.os_family_id,
-            payload.vcpu,
-            payload.ram_gb,
-        )
+        def _run() -> dict:
+            return service.catalog.products().evaluate_combo(
+                payload.product_id,
+                payload.os_family_id,
+                payload.vcpu,
+                payload.ram_gb,
+            )
+
+        return await asyncio.to_thread(_run)
 
     # ── Catalog ────────────────────────────────────────────────────────────────
     @router.get("/catalog")
     async def get_catalog(identity: ApiIdentity = Depends(require_permission("api:read"))):
-        return _catalog_payload(service)
+        return await asyncio.to_thread(_catalog_payload, service)
 
     @router.post("/catalog/reload")
     async def reload_catalog(identity: ApiIdentity = Depends(require_permission("api:write"))):
-        service.reload_catalog()
-        return _catalog_payload(service)
+        def _run() -> dict:
+            service.reload_catalog()
+            return _catalog_payload(service)
+
+        return await asyncio.to_thread(_run)
 
     @router.post("/catalog/path")
     async def set_catalog_path(
         payload: CatalogPathPayload,
         identity: ApiIdentity = Depends(require_permission("api:write")),
     ):
+        # TODO(agent): catalog re-homing is an operator-level action but is gated
+        # by the same api:write permission as ordinary CRUD; promote to a
+        # dedicated permission once one exists in the core permission model.
         path = (payload.path or "").strip()
-        if path:
-            if not Path(path).is_dir():
-                raise HTTPException(status_code=400, detail=f"Directory not found: {path}")
-            service.set_catalog_dir(path)
-        else:
-            service.set_catalog_dir(str(_DEFAULT_CATALOG_DIR))
-        service.reload_catalog()
-        return _catalog_payload(service)
+        target = str(_resolve_catalog_dir(path)) if path else str(_DEFAULT_CATALOG_DIR)
+
+        def _run() -> dict:
+            service.set_catalog_dir(target)
+            service.reload_catalog()
+            return _catalog_payload(service)
+
+        return await asyncio.to_thread(_run)
 
     return router

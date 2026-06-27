@@ -224,6 +224,16 @@ export interface Catalog {
 
 // ─── Fetch wrapper ──────────────────────────────────────────────────────────
 
+const REQUEST_TIMEOUT_MS = 15_000
+
+// In-SPA navigation the shell's router picks up — avoids a full page reload that
+// would cold-load the SPA before dynamic plugin routes register. Mirrors
+// `spaNavigate` in PluginApp.tsx.
+function spaNavigate(path: string) {
+  window.history.pushState({}, '', path)
+  window.dispatchEvent(new PopStateEvent('popstate'))
+}
+
 async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem(TOKEN_KEY)
   const headers: Record<string, string> = {
@@ -232,11 +242,19 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     ...(init.headers as Record<string, string> | undefined),
   }
 
-  const res = await fetch(path, { ...init, headers })
+  // Bound every request so a hung backend cannot leave promises pending forever.
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  let res: Response
+  try {
+    res = await fetch(path, { ...init, headers, signal: controller.signal })
+  } finally {
+    clearTimeout(timeout)
+  }
 
   if (res.status === 401) {
     localStorage.removeItem(TOKEN_KEY)
-    window.location.href = '/login'
+    spaNavigate('/login')
     throw new Error('Nicht autorisiert')
   }
 

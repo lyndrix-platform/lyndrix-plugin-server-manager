@@ -1,8 +1,6 @@
 """SQLAlchemy model for the Server Manager plugin."""
 from __future__ import annotations
 
-from datetime import datetime
-
 from sqlalchemy import Column, DateTime, Integer, JSON, String, Text, func
 from sqlalchemy.orm import DeclarativeBase
 

@@ -32,12 +32,22 @@ def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
         "type_filter": "",
     }
 
+    # Debounced re-render on filter input. `refresh` is defined further down;
+    # the closure resolves it at call time, which is always after render.
+    _debounce = {"timer": None}
+
+    def _debounced_refresh() -> None:
+        if _debounce["timer"] is not None:
+            _debounce["timer"].cancel()
+        _debounce["timer"] = ui.timer(0.3, refresh, once=True)
+
     # ── Header bar ───────────────────────────────────────────────────────────
     with ui.row().classes("w-full items-center gap-3 flex-wrap"):
         ui.input(placeholder="Search servers…") \
             .props(f"{UIStyles.INPUT_PROPS} clearable") \
             .classes("flex-1 min-w-48") \
-            .bind_value(state, "search")
+            .bind_value(state, "search") \
+            .on_value_change(lambda _=None: _debounced_refresh())
 
         envs = [{"label": "All Environments", "value": ""}] + [
             {"label": e["label"], "value": e["id"]}
@@ -47,13 +57,15 @@ def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
             options={e["value"]: e["label"] for e in envs},
             value="",
         ).props(UIStyles.INPUT_PROPS).classes("w-44") \
-            .bind_value(state, "env_filter")
+            .bind_value(state, "env_filter") \
+            .on_value_change(lambda _=None: _debounced_refresh())
 
         ui.select(
             options=status_labels,
             value="",
         ).props(UIStyles.INPUT_PROPS).classes("w-36") \
-            .bind_value(state, "status_filter")
+            .bind_value(state, "status_filter") \
+            .on_value_change(lambda _=None: _debounced_refresh())
 
         type_labels = {"": "All Types"} | {
             t["id"]: t["label"] for t in catalog.hardware().get_server_types()
@@ -61,7 +73,8 @@ def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
         ui.select(
             options=type_labels, value="",
         ).props(UIStyles.INPUT_PROPS).classes("w-36") \
-            .bind_value(state, "type_filter")
+            .bind_value(state, "type_filter") \
+            .on_value_change(lambda _=None: _debounced_refresh())
 
         ui.button(icon="add", text="Add Server",
                   on_click=lambda: open_configurator_fn(None)) \
@@ -227,9 +240,6 @@ def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
                     ui.notify(f"'{name}' deleted.", type="positive"),
                 ))
         dlg.open()
-
-    for key in ("search", "env_filter", "status_filter", "type_filter"):
-        ui.timer(0.4, refresh, once=True)
 
     refresh()
     return refresh
