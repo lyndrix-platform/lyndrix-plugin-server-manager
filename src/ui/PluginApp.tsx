@@ -1,4 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
+// react-i18next is provided by the host shell (window.__lyndrix_react_i18next);
+// declared external in vite.ui.config.ts so the plugin shares the host's i18n
+// instance + active language. Strings come from locales/server_manager.<locale>.json,
+// auto-registered by core and served via the catalog (namespace "server_manager").
+import { useTranslation } from 'react-i18next'
 import { serverManagerApi } from './lib/api'
 import type {
   ServerRecord, Catalog, StatusOption,
@@ -8,7 +13,7 @@ import ServerWizard from './ServerWizard'
 // ─── Shared style helpers ───────────────────────────────────────────────────
 
 const cardStyle: React.CSSProperties = {
-  background: 'var(--lx-surface)',
+  background: 'var(--lx-surface-glass, var(--lx-surface))', backdropFilter: 'blur(16px) saturate(160%)', WebkitBackdropFilter: 'blur(16px) saturate(160%)',
   border: '1px solid var(--lx-border-soft)',
   borderRadius: 'var(--lx-radius-md)',
   overflow: 'hidden',
@@ -131,6 +136,7 @@ function ServerListView({
   onCreate: () => void
   onEdit: (s: ServerRecord) => void
 }) {
+  const { t } = useTranslation('server_manager')
   const catalog = useCatalog()
   const [servers, setServers] = useState<ServerRecord[]>([])
   const [loading, setLoading] = useState(false)
@@ -148,11 +154,11 @@ function ServerListView({
       const res = await serverManagerApi.listServers()
       setServers(res.servers)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Fehler beim Laden')
+      setError(err instanceof Error ? err.message : t('common.loadFailed', { defaultValue: 'Failed to load' }))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => { void load() }, [load])
 
@@ -178,7 +184,7 @@ function ServerListView({
       setConfirmId(null)
       await load()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Löschen fehlgeschlagen')
+      setError(err instanceof Error ? err.message : t('common.deleteFailed', { defaultValue: 'Delete failed' }))
     }
   }
 
@@ -187,16 +193,16 @@ function ServerListView({
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '0.35rem' }}>
         <div>
           <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--lx-text)' }}>
-            Server Manager
+            {t('list.title', { defaultValue: 'Server Manager' })}
           </h1>
           <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: 'var(--lx-text-muted)' }}>
-            {filtered.length} {filtered.length === 1 ? 'Server' : 'Server'} · Verwalte und konfiguriere deine Server.
+            {t('list.subtitle', { defaultValue: '{{count}} servers · Manage and configure your servers.', count: filtered.length })}
           </p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
-          <Button label="Aktualisieren" icon="refresh" onClick={() => void load()} disabled={loading} />
-          <Button label="Server" icon="add" onClick={onCreate} variant="primary" />
-          <Button label="Settings" icon="settings" onClick={goSettings} />
+          <Button label={t('common.refresh', { defaultValue: 'Refresh' })} icon="refresh" onClick={() => void load()} disabled={loading} />
+          <Button label={t('list.addServer', { defaultValue: 'Server' })} icon="add" onClick={onCreate} variant="primary" />
+          <Button label={t('common.settings', { defaultValue: 'Settings' })} icon="settings" onClick={goSettings} />
         </div>
       </div>
 
@@ -207,22 +213,22 @@ function ServerListView({
         <input
           className="lx-input"
           style={{ flex: '1 1 200px' }}
-          placeholder="Suche nach Name, Hostname, Tag…"
+          placeholder={t('list.searchPlaceholder', { defaultValue: 'Search by name, hostname, tag…' })}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
         <select className="lx-select" style={{ flex: '0 0 170px' }} value={envFilter} onChange={(e) => setEnvFilter(e.target.value)}>
-          <option value="">Alle Umgebungen</option>
+          <option value="">{t('list.allEnvironments', { defaultValue: 'All environments' })}</option>
           {(catalog?.environments ?? []).map((e) => (
             <option key={e.id} value={e.id}>{e.provider_label ? `${e.provider_label} · ${e.label}` : e.label}</option>
           ))}
         </select>
         <select className="lx-select" style={{ flex: '0 0 140px' }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-          <option value="">Alle Status</option>
+          <option value="">{t('list.allStatuses', { defaultValue: 'All statuses' })}</option>
           {statuses.map((s) => (<option key={s.id} value={s.id}>{s.label || s.id}</option>))}
         </select>
         <select className="lx-select" style={{ flex: '0 0 140px' }} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-          <option value="">Alle Typen</option>
+          <option value="">{t('list.allTypes', { defaultValue: 'All types' })}</option>
           {(catalog?.server_types ?? []).map((t) => (<option key={t.id} value={t.id}>{t.label || t.id}</option>))}
         </select>
       </div>
@@ -236,10 +242,10 @@ function ServerListView({
       {!loading && filtered.length === 0 && (
         <div className="lx-card lx-empty">
           <span className="material-icons">dns</span>
-          <p style={{ fontSize: '0.875rem', margin: 0 }}>Keine Server gefunden.</p>
+          <p style={{ fontSize: '0.875rem', margin: 0 }}>{t('list.empty', { defaultValue: 'No servers found.' })}</p>
           <button className="lx-btn lx-btn--secondary lx-btn--sm" style={{ marginTop: 4 }} onClick={onCreate}>
             <span className="material-icons" style={{ fontSize: 16 }}>add</span>
-            Ersten Server anlegen
+            {t('list.createFirst', { defaultValue: 'Create first server' })}
           </button>
         </div>
       )}
@@ -249,10 +255,10 @@ function ServerListView({
           <table className="lx-table">
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Verbindung</th>
-                <th>Status</th>
-                <th style={{ width: 44 }} aria-label="Aktionen" />
+                <th>{t('list.colName', { defaultValue: 'Name' })}</th>
+                <th>{t('list.colConnection', { defaultValue: 'Connection' })}</th>
+                <th>{t('list.colStatus', { defaultValue: 'Status' })}</th>
+                <th style={{ width: 44 }} aria-label={t('list.actions', { defaultValue: 'Actions' })} />
               </tr>
             </thead>
             <tbody>
@@ -270,13 +276,13 @@ function ServerListView({
                   <td style={{ textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
                     {confirmId === s.id ? (
                       <span style={{ display: 'inline-flex', gap: '0.4rem' }}>
-                        <Button label="Löschen" variant="danger" onClick={() => void doDelete(s.id)} />
-                        <Button label="Abbrechen" onClick={() => setConfirmId(null)} />
+                        <Button label={t('common.delete', { defaultValue: 'Delete' })} variant="danger" onClick={() => void doDelete(s.id)} />
+                        <Button label={t('common.cancel', { defaultValue: 'Cancel' })} onClick={() => setConfirmId(null)} />
                       </span>
                     ) : (
                       <button
                         onClick={() => setConfirmId(s.id)}
-                        title="Löschen"
+                        title={t('common.delete', { defaultValue: 'Delete' })}
                         className="lx-icon-btn lx-icon-btn--danger"
                       >
                         <span className="material-icons" style={{ fontSize: 18 }}>delete_outline</span>
@@ -296,6 +302,7 @@ function ServerListView({
 // ─── Settings view ──────────────────────────────────────────────────────────
 
 function SettingsView() {
+  const { t } = useTranslation('server_manager')
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [pathInput, setPathInput] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -308,9 +315,9 @@ function SettingsView() {
       setCatalog(cat)
       setPathInput(cat.is_default ? '' : cat.catalog_dir)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Fehler beim Laden')
+      setError(err instanceof Error ? err.message : t('common.loadFailed', { defaultValue: 'Failed to load' }))
     }
-  }, [])
+  }, [t])
 
   useEffect(() => { void load() }, [load])
 
@@ -319,9 +326,11 @@ function SettingsView() {
     try {
       const cat = await serverManagerApi.setCatalogPath(pathInput.trim())
       setCatalog(cat)
-      setNotice(cat.is_default ? 'Auf Standard-Katalog zurückgesetzt.' : `Katalogpfad gesetzt: ${cat.catalog_dir}`)
+      setNotice(cat.is_default
+        ? t('settings.resetDefault', { defaultValue: 'Reset to default catalog.' })
+        : t('settings.pathSet', { defaultValue: 'Catalog path set: {{path}}', path: cat.catalog_dir }))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Pfad konnte nicht gesetzt werden')
+      setError(err instanceof Error ? err.message : t('settings.pathFailed', { defaultValue: 'Could not set path' }))
     } finally { setBusy(false) }
   }
 
@@ -330,22 +339,22 @@ function SettingsView() {
     try {
       const cat = await serverManagerApi.reloadCatalog()
       setCatalog(cat)
-      setNotice('Katalog neu geladen.')
+      setNotice(t('settings.reloaded', { defaultValue: 'Catalog reloaded.' }))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Reload fehlgeschlagen')
+      setError(err instanceof Error ? err.message : t('settings.reloadFailed', { defaultValue: 'Reload failed' }))
     } finally { setBusy(false) }
   }
 
   const stats = catalog?.stats ?? {}
   const statEntries: [string, string][] = [
-    ['cpu_options', 'CPU-Optionen'],
-    ['ram_options', 'RAM-Module'],
-    ['storage_options', 'Storage-Optionen'],
-    ['profiles', 'Profile'],
-    ['products', 'Produkte'],
-    ['providers', 'Provider'],
-    ['stages', 'Stages'],
-    ['legacy_rules', 'Legacy-Regeln'],
+    ['cpu_options', t('settings.stats.cpu_options', { defaultValue: 'CPU options' })],
+    ['ram_options', t('settings.stats.ram_options', { defaultValue: 'RAM modules' })],
+    ['storage_options', t('settings.stats.storage_options', { defaultValue: 'Storage options' })],
+    ['profiles', t('settings.stats.profiles', { defaultValue: 'Profiles' })],
+    ['products', t('settings.stats.products', { defaultValue: 'Products' })],
+    ['providers', t('settings.stats.providers', { defaultValue: 'Providers' })],
+    ['stages', t('settings.stats.stages', { defaultValue: 'Stages' })],
+    ['legacy_rules', t('settings.stats.legacy_rules', { defaultValue: 'Legacy rules' })],
   ]
 
   return (
@@ -354,12 +363,12 @@ function SettingsView() {
         <button
           onClick={goBack}
           className="lx-icon-btn"
-          title="Zurück"
+          title={t('common.back', { defaultValue: 'Back' })}
         >
           <span className="material-icons" style={{ fontSize: 18 }}>arrow_back</span>
         </button>
         <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--lx-text)' }}>
-          Server Manager — Einstellungen
+          {t('settings.title', { defaultValue: 'Server Manager — Settings' })}
         </h1>
       </div>
 
@@ -367,23 +376,22 @@ function SettingsView() {
       {notice && <NoticeBox msg={notice} />}
 
       <div style={{ ...cardStyle, padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.25rem' }}>
-        <div className="lx-section-title">Katalog-Konfiguration</div>
+        <div className="lx-section-title">{t('settings.catalogConfig', { defaultValue: 'Catalog configuration' })}</div>
         <div style={{ fontSize: '0.78rem', color: 'var(--lx-text-muted)', lineHeight: 1.5 }}>
-          Verzeichnis mit hardware.yml, environments.yml, profiles.yml, products.yml, settings.yml.
-          Leer lassen für den mitgelieferten Standard-Katalog.
+          {t('settings.catalogHint', { defaultValue: 'Directory containing hardware.yml, environments.yml, profiles.yml, products.yml, settings.yml. Leave empty for the bundled default catalog.' })}
         </div>
         <input
           className="lx-input"
           value={pathInput}
           onChange={(e) => setPathInput(e.target.value)}
-          placeholder={catalog?.is_default ? `Standard: ${catalog?.catalog_dir ?? ''}` : ''}
+          placeholder={catalog?.is_default ? t('settings.defaultPlaceholder', { defaultValue: 'Default: {{path}}', path: catalog?.catalog_dir ?? '' }) : ''}
         />
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <Button label="Pfad übernehmen" icon="save" onClick={() => void applyPath()} disabled={busy} variant="primary" />
-          <Button label="Katalog neu laden" icon="refresh" onClick={() => void reload()} disabled={busy} />
+          <Button label={t('settings.applyPath', { defaultValue: 'Apply path' })} icon="save" onClick={() => void applyPath()} disabled={busy} variant="primary" />
+          <Button label={t('settings.reloadCatalog', { defaultValue: 'Reload catalog' })} icon="refresh" onClick={() => void reload()} disabled={busy} />
         </div>
         <div className="lx-mono" style={{ fontSize: '0.7rem', color: 'var(--lx-text-muted)' }}>
-          Aktiv: {catalog?.catalog_dir ?? '—'} {catalog?.is_default ? '(Standard)' : ''}
+          {t('settings.active', { defaultValue: 'Active: {{path}}', path: catalog?.catalog_dir ?? '—' })} {catalog?.is_default ? t('settings.defaultTag', { defaultValue: '(default)' }) : ''}
         </div>
       </div>
 
@@ -400,8 +408,8 @@ function SettingsView() {
       {/* Products preview */}
       {catalog && catalog.products.length > 0 && (
         <div style={{ ...cardStyle, marginTop: '1.25rem' }}>
-          <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--lx-border-soft)', background: 'var(--lx-elevated)' }} className="lx-section-title">
-            Produkte
+          <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--lx-border-soft)', background: 'var(--lx-elevated-glass, var(--lx-elevated))' }} className="lx-section-title">
+            {t('settings.products', { defaultValue: 'Products' })}
           </div>
           {catalog.products.map((p) => (
             <div key={p.id} style={{ padding: '0.6rem 1rem', borderBottom: '1px solid var(--lx-border-soft)', fontSize: '0.8rem', color: 'var(--lx-text)' }}>
@@ -418,12 +426,13 @@ function SettingsView() {
 // ─── Root ───────────────────────────────────────────────────────────────────
 
 function ServerManagerView() {
+  const { t } = useTranslation('server_manager')
   const [view, setView] = useState<{ kind: 'list' } | { kind: 'form'; id: number | null }>({ kind: 'list' })
   const catalog = useCatalog()
 
   if (view.kind === 'form') {
     if (!catalog) {
-      return <div style={{ maxWidth: 720, margin: '0 auto', padding: '3rem 1.5rem', color: 'var(--lx-text-muted)', textAlign: 'center' }}>Lade Katalog…</div>
+      return <div style={{ maxWidth: 720, margin: '0 auto', padding: '3rem 1.5rem', color: 'var(--lx-text-muted)', textAlign: 'center' }}>{t('wizard.loadingCatalog', { defaultValue: 'Loading catalog…' })}</div>
     }
     return (
       <ServerWizard

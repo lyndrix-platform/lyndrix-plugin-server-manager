@@ -52,7 +52,7 @@ from .app.ui.page import render_server_manager_page
 manifest = ModuleManifest(
     id="lyndrix.plugin.server_manager",
     name="Server Manager",
-    version="0.2.0",
+    version="0.3.0",
     description=(
         "Central server inventory with configurable hardware catalogs, "
         "combination rules, and event-bus hooks for downstream order workflows."
@@ -65,6 +65,10 @@ manifest = ModuleManifest(
     repo_url="https://github.com/lyndrix-platform/lyndrix-plugin-server-manager",
     ui_route="/server-manager",
     react_ui=True,
+    # i18next-shaped namespace served to the React UI; core auto-registers
+    # locales/server_manager.<locale>.json and adds "server_manager" to the
+    # client allowlist.
+    i18n_namespace="server_manager",
     react_routes=[
         {
             "path": "/server-manager",

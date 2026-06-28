@@ -1,4 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+// react-i18next is provided by the host shell (window.__lyndrix_react_i18next);
+// declared external in vite.ui.config.ts so the plugin shares the host's i18n
+// instance + active language. Strings come from locales/server_manager.<locale>.json,
+// auto-registered by core and served via the catalog (namespace "server_manager").
+import { useTranslation } from 'react-i18next'
 import { serverManagerApi } from './lib/api'
 import type {
   Catalog, Product, OsVariant, StorageOption,
@@ -8,7 +13,7 @@ import type {
 // ─── Shared styles (var(--lx-*) theme tokens) ───────────────────────────────
 
 const card: React.CSSProperties = {
-  background: 'var(--lx-surface)',
+  background: 'var(--lx-surface-glass, var(--lx-surface))', backdropFilter: 'blur(16px) saturate(160%)', WebkitBackdropFilter: 'blur(16px) saturate(160%)',
   border: '1px solid var(--lx-border-soft)',
   borderRadius: 'var(--lx-radius-md)',
   padding: '1rem',
@@ -41,7 +46,7 @@ function tileStyle(state: TileState): React.CSSProperties {
     userSelect: 'none',
     transition: 'all 0.12s',
     border: '1px solid var(--lx-border-soft)',
-    background: 'var(--lx-surface)',
+    background: 'var(--lx-surface-glass, var(--lx-surface))', backdropFilter: 'blur(16px) saturate(160%)', WebkitBackdropFilter: 'blur(16px) saturate(160%)',
     color: 'var(--lx-text)',
   }
   if (state === 'selected') {
@@ -144,7 +149,6 @@ function blankForm(): WizardForm {
   }
 }
 
-const STEP_LABELS = ['Basis & Produkt', 'Hardware', 'Prüfen & Speichern']
 
 // ─── Wizard ─────────────────────────────────────────────────────────────────
 
@@ -154,7 +158,13 @@ export default function ServerWizard({ serverId, catalog, onSaved, onCancel }: {
   onSaved: () => void
   onCancel: () => void
 }) {
+  const { t } = useTranslation('server_manager')
   const isEdit = serverId !== null
+  const stepLabels = [
+    t('wizard.steps.basics', { defaultValue: 'Basics & product' }),
+    t('wizard.steps.hardware', { defaultValue: 'Hardware' }),
+    t('wizard.steps.review', { defaultValue: 'Review & save' }),
+  ]
   const [form, setForm] = useState<WizardForm>(blankForm)
   const [step, setStep] = useState(0)
   const [loaded, setLoaded] = useState(serverId === null)
@@ -192,8 +202,8 @@ export default function ServerWizard({ serverId, catalog, onSaved, onCancel }: {
         storage_disks: disks.map((d) => ({ disk_id: d.disk_id ?? '', mount: d.mount ?? '', size_gb: Number(d.size_gb ?? 0) })),
       })
       setLoaded(true)
-    }).catch((e) => { setError(e instanceof Error ? e.message : 'Laden fehlgeschlagen'); setLoaded(true) })
-  }, [serverId, catalog])
+    }).catch((e) => { setError(e instanceof Error ? e.message : t('common.loadFailed', { defaultValue: 'Failed to load' })); setLoaded(true) })
+  }, [serverId, catalog, t])
 
   // ── Derived catalog data ───────────────────────────────────────────────────
   const provider = useMemo(() => catalog.providers.find((p) => p.id === form.provider_id) ?? null, [catalog, form.provider_id])
@@ -334,12 +344,12 @@ export default function ServerWizard({ serverId, catalog, onSaved, onCancel }: {
       else await serverManagerApi.createServer(payload)
       onSaved()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Speichern fehlgeschlagen')
+      setError(e instanceof Error ? e.message : t('common.saveFailed', { defaultValue: 'Save failed' }))
     } finally { setBusy(false) }
   }
 
   if (!loaded) {
-    return <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--lx-text-muted)' }}>Lade…</div>
+    return <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--lx-text-muted)' }}>{t('common.loading', { defaultValue: 'Loading…' })}</div>
   }
 
   const setField = <K extends keyof WizardForm>(k: K, v: WizardForm[K]) => setForm((f) => ({ ...f, [k]: v }))
@@ -348,16 +358,16 @@ export default function ServerWizard({ serverId, catalog, onSaved, onCancel }: {
     <div style={{ maxWidth: 920, margin: '0 auto', padding: '1.25rem 1.5rem 3rem' }}>
       {/* Header + step bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
-        <button onClick={onCancel} className="lx-icon-btn" title="Zurück">
+        <button onClick={onCancel} className="lx-icon-btn" title={t('common.back', { defaultValue: 'Back' })}>
           <span className="material-icons" style={{ fontSize: 18 }}>arrow_back</span>
         </button>
         <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--lx-text)' }}>
-          {isEdit ? `Bearbeiten: ${form.name}` : 'Neuen Server anlegen'}
+          {isEdit ? t('wizard.editTitle', { defaultValue: 'Edit: {{name}}', name: form.name }) : t('wizard.createTitle', { defaultValue: 'Create new server' })}
         </h1>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem' }}>
-        {STEP_LABELS.map((lbl, i) => {
+        {stepLabels.map((lbl, i) => {
           const active = i === step
           const done = i < step
           const accent = active ? 'var(--lx-accent)' : done ? 'var(--lx-state-up)' : 'var(--lx-text-muted)'
@@ -384,7 +394,7 @@ export default function ServerWizard({ serverId, catalog, onSaved, onCancel }: {
                 </span>
                 <span style={{ display: window.innerWidth < 560 ? 'none' : 'inline' }}>{lbl}</span>
               </div>
-              {i < STEP_LABELS.length - 1 && (
+              {i < stepLabels.length - 1 && (
                 <div style={{ flex: 1, height: 2, borderRadius: 2, background: done ? 'color-mix(in srgb, var(--lx-state-up) 40%, transparent)' : 'var(--lx-border-soft)' }} />
               )}
             </React.Fragment>
@@ -419,10 +429,10 @@ export default function ServerWizard({ serverId, catalog, onSaved, onCancel }: {
 
       {/* Nav */}
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1.75rem', paddingTop: '1.25rem', borderTop: '1px solid var(--lx-border-soft)' }}>
-        <Btn label={step === 0 ? 'Abbrechen' : 'Zurück'} icon={step === 0 ? undefined : 'left'} onClick={() => (step === 0 ? onCancel() : setStep(step - 1))} />
+        <Btn label={step === 0 ? t('common.cancel', { defaultValue: 'Cancel' }) : t('common.back', { defaultValue: 'Back' })} icon={step === 0 ? undefined : 'left'} onClick={() => (step === 0 ? onCancel() : setStep(step - 1))} />
         {step < 2
-          ? <Btn label="Weiter" icon="right" variant="primary" onClick={() => setStep(step + 1)} disabled={step === 0 && (!form.name.trim() || !form.environment_id || !form.server_type)} />
-          : <Btn label={isEdit ? 'Speichern' : 'Anlegen'} icon="check" variant="primary" onClick={() => void save()} disabled={busy || hasError || !form.name.trim() || !form.environment_id || !form.server_type} />}
+          ? <Btn label={t('wizard.next', { defaultValue: 'Next' })} icon="right" variant="primary" onClick={() => setStep(step + 1)} disabled={step === 0 && (!form.name.trim() || !form.environment_id || !form.server_type)} />
+          : <Btn label={isEdit ? t('common.save', { defaultValue: 'Save' }) : t('common.create', { defaultValue: 'Create' })} icon="check" variant="primary" onClick={() => void save()} disabled={busy || hasError || !form.name.trim() || !form.environment_id || !form.server_type} />}
       </div>
     </div>
   )
@@ -448,7 +458,8 @@ function Step1({
   pickOsFamily: (id: string) => void
   selectProduct: (id: string) => void
 }) {
-  const allowedTypes = profile?.allowed_server_types ?? catalog.server_types.map((t) => t.id)
+  const { t } = useTranslation('server_manager')
+  const allowedTypes = profile?.allowed_server_types ?? catalog.server_types.map((st) => st.id)
   const curVariant = selectedProduct?.os_variants.find((v) => v.id === form.os_family_id) ?? null
 
   return (
@@ -456,11 +467,11 @@ function Step1({
       <div style={card}>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <div style={{ flex: '1 1 220px', display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <label style={fieldLabel}>Server-Name *</label>
+            <label style={fieldLabel}>{t('wizard.step1.serverName', { defaultValue: 'Server name *' })}</label>
             <input className="lx-input" value={form.name} onChange={(e) => setField('name', e.target.value)} placeholder="srv-app-01" />
           </div>
           <div style={{ flex: '1 1 220px', display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <label style={fieldLabel}>Hostname</label>
+            <label style={fieldLabel}>{t('wizard.step1.hostname', { defaultValue: 'Hostname' })}</label>
             <input className="lx-input" value={form.hostname} onChange={(e) => setField('hostname', e.target.value)} placeholder="srv-app-01.example.com" />
           </div>
         </div>
@@ -468,7 +479,7 @@ function Step1({
 
       {/* Provider */}
       <div style={card}>
-        <label style={fieldLabel}>Provider *</label>
+        <label style={fieldLabel}>{t('wizard.step1.provider', { defaultValue: 'Provider *' })}</label>
         <div style={tileRow}>
           {catalog.providers.map((p) => (
             <Tile
@@ -479,7 +490,7 @@ function Step1({
             >
               <Ico name={p.icon} size={20} />
               <span style={{ fontWeight: 700, textAlign: 'center' }}>{p.label}</span>
-              {p.placeholder && <span style={{ fontSize: '0.6rem', fontStyle: 'italic', opacity: 0.7 }}>bald</span>}
+              {p.placeholder && <span style={{ fontSize: '0.6rem', fontStyle: 'italic', opacity: 0.7 }}>{t('wizard.step1.soon', { defaultValue: 'soon' })}</span>}
             </Tile>
           ))}
         </div>
@@ -489,10 +500,10 @@ function Step1({
           <>
             {profile && (
               <div style={{ fontSize: '0.7rem', color: 'var(--lx-text-muted)' }}>
-                Profil: <b style={{ color: 'var(--lx-text)' }}>{profile.label}</b> ({profile.allowed_server_types.join(' / ')})
+                {t('wizard.step1.profileLabel', { defaultValue: 'Profile:' })} <b style={{ color: 'var(--lx-text)' }}>{profile.label}</b> ({profile.allowed_server_types.join(' / ')})
               </div>
             )}
-            <label style={fieldLabel}>Stage *</label>
+            <label style={fieldLabel}>{t('wizard.step1.stage', { defaultValue: 'Stage *' })}</label>
             <div style={tileRow}>
               {provider.stages.map((s) => (
                 <Tile key={s.id} state={form.environment_id === s.id ? 'selected' : 'normal'} onClick={() => pickStage(s.id)} style={{ minWidth: 96, alignItems: 'center' }}>
@@ -507,7 +518,7 @@ function Step1({
         {/* Server type */}
         {form.environment_id && (
           <>
-            <label style={fieldLabel}>Server-Typ *</label>
+            <label style={fieldLabel}>{t('wizard.step1.serverType', { defaultValue: 'Server type *' })}</label>
             <div style={tileRow}>
               {catalog.server_types.map((t) => {
                 const disabled = !allowedTypes.includes(t.id)
@@ -524,7 +535,7 @@ function Step1({
         {/* OS family */}
         {form.environment_id && form.server_type && osFamilies.length > 0 && (
           <>
-            <label style={fieldLabel}>Betriebssystem *</label>
+            <label style={fieldLabel}>{t('wizard.step1.os', { defaultValue: 'Operating system *' })}</label>
             <div style={tileRow}>
               {osFamilies.map((fam) => (
                 <Tile key={fam.id} state={form.os_family_id === fam.id ? 'selected' : 'normal'} onClick={() => pickOsFamily(fam.id)} style={{ minWidth: 110, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -539,9 +550,9 @@ function Step1({
         {/* Product */}
         {form.environment_id && form.server_type && (
           <>
-            <label style={fieldLabel}>Server-Produkt *</label>
+            <label style={fieldLabel}>{t('wizard.step1.product', { defaultValue: 'Server product *' })}</label>
             {productsForSel.length === 0
-              ? <div style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--lx-text-muted)' }}>Keine Produkte für diese Auswahl verfügbar.</div>
+              ? <div style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--lx-text-muted)' }}>{t('wizard.step1.noProducts', { defaultValue: 'No products available for this selection.' })}</div>
               : (
                 <div style={tileRow}>
                   {productsForSel.map((p) => (
@@ -561,7 +572,7 @@ function Step1({
         {/* Service class + OS version */}
         {selectedProduct && selectedProduct.service_classes.length > 0 && (
           <>
-            <label style={fieldLabel}>Service-Klasse *</label>
+            <label style={fieldLabel}>{t('wizard.step1.serviceClass', { defaultValue: 'Service class *' })}</label>
             <div style={tileRow}>
               {selectedProduct.service_classes.map((sc) => (
                 <Tile key={sc.id} state={form.service_class_id === sc.id ? 'selected' : 'normal'} onClick={() => setField('service_class_id', sc.id)} style={{ minWidth: 100, alignItems: 'center' }}>
@@ -577,7 +588,7 @@ function Step1({
         )}
         {curVariant && curVariant.os_versions.length > 0 && (
           <>
-            <label style={fieldLabel}>OS-Version *</label>
+            <label style={fieldLabel}>{t('wizard.step1.osVersion', { defaultValue: 'OS version *' })}</label>
             <div style={tileRow}>
               {curVariant.os_versions.map((ver) => (
                 <Tile key={ver.id} state={form.os_version_id === ver.id ? 'selected' : 'normal'} onClick={() => setField('os_version_id', ver.id)} style={{ minWidth: 110, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -593,7 +604,7 @@ function Step1({
       {/* Profile features */}
       {profile && (
         <div style={card}>
-          <label style={fieldLabel}>Profil-Funktionen — {profile.label}</label>
+          <label style={fieldLabel}>{t('wizard.step1.profileFeatures', { defaultValue: 'Profile features — {{name}}', name: profile.label })}</label>
           <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
             {profile.features.map((feat) => {
               const ok = feat.available !== false
@@ -613,18 +624,18 @@ function Step1({
       <div style={card}>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <div style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <label style={fieldLabel}>Status</label>
+            <label style={fieldLabel}>{t('wizard.step1.status', { defaultValue: 'Status' })}</label>
             <select className="lx-select" value={form.status} onChange={(e) => setField('status', e.target.value)}>
               {catalog.statuses.map((s) => (<option key={s.id} value={s.id}>{s.label || s.id}</option>))}
             </select>
           </div>
           <div style={{ flex: '2 1 240px', display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <label style={fieldLabel}>Tags (kommagetrennt)</label>
+            <label style={fieldLabel}>{t('wizard.step1.tags', { defaultValue: 'Tags (comma-separated)' })}</label>
             <input className="lx-input" value={form.tags} onChange={(e) => setField('tags', e.target.value)} placeholder="prod, db, critical" />
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          <label style={fieldLabel}>Notizen</label>
+          <label style={fieldLabel}>{t('wizard.step1.notes', { defaultValue: 'Notes' })}</label>
           <textarea className="lx-textarea" style={{ minHeight: 60, resize: 'vertical' }} value={form.notes} onChange={(e) => setField('notes', e.target.value)} />
         </div>
       </div>
@@ -649,6 +660,7 @@ function Step2({ catalog, form, setForm, profile, selectedProduct, isPhysical, s
   isPhysical: boolean
   step: number
 }) {
+  const { t } = useTranslation('server_manager')
   const ramSteps = profile?.ram_steps_gb ?? [32, 64, 128, 256, 512]
   const socketOptions = profile?.socket_options ?? [1, 2, 4]
   const ramManualMax = profile?.ram_manual_max_gb ?? 8192
@@ -665,7 +677,7 @@ function Step2({ catalog, form, setForm, profile, selectedProduct, isPhysical, s
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
       <div style={{ fontSize: '0.74rem', color: 'var(--lx-text-muted)' }}>
-        Produkt: <b style={{ color: 'var(--lx-text)' }}>{selectedProduct?.label ?? '—'}</b> · {form.server_type}
+        {t('wizard.step2.product', { defaultValue: 'Product:' })} <b style={{ color: 'var(--lx-text)' }}>{selectedProduct?.label ?? '—'}</b> · {form.server_type}
       </div>
 
       {isPhysical ? (
@@ -697,6 +709,7 @@ function PhysicalHw({ catalog, form, setForm, allowedCpu, ramSteps, socketOption
   socketOptions: number[]
   ramManualMax: number
 }) {
+  const { t } = useTranslation('server_manager')
   const cpus = useMemo(() => {
     let list = catalog.hardware.cpu_options.filter((c) => c.compatible_types.includes('physical'))
     if (allowedCpu && allowedCpu.length) list = list.filter((c) => allowedCpu.includes(c.id))
@@ -706,7 +719,7 @@ function PhysicalHw({ catalog, form, setForm, allowedCpu, ramSteps, socketOption
   return (
     <>
       <div style={card}>
-        <label style={fieldLabel}>CPU-Modell *</label>
+        <label style={fieldLabel}>{t('wizard.step2.cpuModel', { defaultValue: 'CPU model *' })}</label>
         <div style={tileRow}>
           {cpus.map((c) => (
             <Tile key={c.id} state={form.cpu_id === c.id ? 'selected' : 'normal'} onClick={() => setForm((f) => ({ ...f, cpu_id: c.id }))} style={{ minWidth: 170 }}>
@@ -717,9 +730,9 @@ function PhysicalHw({ catalog, form, setForm, allowedCpu, ramSteps, socketOption
               {c.server_model && <span style={{ fontSize: '0.58rem', opacity: 0.6, fontStyle: 'italic', fontWeight: 400 }}>{c.server_model}</span>}
             </Tile>
           ))}
-          {cpus.length === 0 && <span style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--lx-text-muted)' }}>Keine CPUs verfügbar.</span>}
+          {cpus.length === 0 && <span style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--lx-text-muted)' }}>{t('wizard.step2.noCpus', { defaultValue: 'No CPUs available.' })}</span>}
         </div>
-        <label style={fieldLabel}>Sockets</label>
+        <label style={fieldLabel}>{t('wizard.step2.sockets', { defaultValue: 'Sockets' })}</label>
         <div style={tileRow}>
           {socketOptions.map((s) => (
             <Tile key={s} state={form.cpu_count === s ? 'selected' : 'normal'} onClick={() => setForm((f) => ({ ...f, cpu_count: s }))} style={{ minWidth: 48, alignItems: 'center' }}>{s}</Tile>
@@ -728,7 +741,7 @@ function PhysicalHw({ catalog, form, setForm, allowedCpu, ramSteps, socketOption
       </div>
 
       <div style={card}>
-        <label style={fieldLabel}>RAM (GB gesamt) *</label>
+        <label style={fieldLabel}>{t('wizard.step2.ramTotal', { defaultValue: 'RAM (GB total) *' })}</label>
         <div style={{ ...tileRow, alignItems: 'center' }}>
           {ramSteps.map((gb) => (
             <Tile key={gb} state={form.ram_gb === gb ? 'selected' : 'normal'} onClick={() => setForm((f) => ({ ...f, ram_gb: gb }))} style={{ minWidth: 56, alignItems: 'center' }}>{gb}</Tile>
@@ -736,7 +749,7 @@ function PhysicalHw({ catalog, form, setForm, allowedCpu, ramSteps, socketOption
           <input
             type="number" min={1} max={ramManualMax} step={16}
             className="lx-input" style={{ width: 110 }}
-            placeholder="manuell GB"
+            placeholder={t('wizard.step2.manualGb', { defaultValue: 'manual GB' })}
             value={form.ram_gb ?? ''}
             onChange={(e) => setForm((f) => ({ ...f, ram_gb: e.target.value ? parseInt(e.target.value, 10) : null }))}
           />
@@ -755,6 +768,7 @@ function VirtualHw({ form, setForm, selectedProduct, ramSteps, vcpuTiles, ramMan
   ramManualMax: number
   step: number
 }) {
+  const { t } = useTranslation('server_manager')
   const matrix = selectedProduct?.resources?.vcpu_ram_matrix ?? []
   const hasMatrix = matrix.length > 0
   const ramStep = selectedProduct?.resources?.ram_step_gb ?? 1
@@ -838,13 +852,13 @@ function VirtualHw({ form, setForm, selectedProduct, ramSteps, vcpuTiles, ramMan
       {hasMatrix && (
         <div style={{ fontSize: '0.72rem', color: osFamily ? 'var(--lx-text-muted)' : 'var(--lx-state-paused)' }}>
           {osFamily
-            ? <>Matrix aktiv für OS „{osFamily}“{ramSpecialMax ? ` · Sondergröße bis ${ramSpecialMax} GB` : ''}{ramStep > 1 ? ` · RAM-Schritt ${ramStep} GB` : ''}</>
-            : 'Wähle in Schritt 1 ein Betriebssystem, um die RAM-Matrix zu aktivieren.'}
+            ? <>{t('wizard.step2.matrixActive', { defaultValue: 'Matrix active for OS "{{os}}"', os: osFamily })}{ramSpecialMax ? t('wizard.step2.matrixSpecial', { defaultValue: ' · Special size up to {{max}} GB', max: ramSpecialMax }) : ''}{ramStep > 1 ? t('wizard.step2.matrixStep', { defaultValue: ' · RAM step {{step}} GB', step: ramStep }) : ''}</>
+            : t('wizard.step2.matrixHint', { defaultValue: 'Select an operating system in step 1 to activate the RAM matrix.' })}
         </div>
       )}
 
       <div style={card}>
-        <label style={fieldLabel}>vCPU-Anzahl *</label>
+        <label style={fieldLabel}>{t('wizard.step2.vcpuCount', { defaultValue: 'vCPU count *' })}</label>
         <div style={{ ...tileRow, alignItems: 'center' }}>
           {vcpuTileValues.map((v) => (
             <Tile key={v} state={vcpuState(v)} onClick={() => setForm((f) => ({ ...f, vcpu_count: f.vcpu_count === v ? null : v }))} style={{ minWidth: 48, alignItems: 'center' }}>{v}</Tile>
@@ -855,13 +869,13 @@ function VirtualHw({ form, setForm, selectedProduct, ramSteps, vcpuTiles, ramMan
       </div>
 
       <div style={card}>
-        <label style={fieldLabel}>RAM (GB) *</label>
+        <label style={fieldLabel}>{t('wizard.step2.ram', { defaultValue: 'RAM (GB) *' })}</label>
         <div style={{ ...tileRow, alignItems: 'center' }}>
           {ramTileValues.map((gb) => {
             const lbl = gb >= 1000 && gb % 1000 === 0 ? `${gb / 1000} TB` : `${gb} GB`
             return <Tile key={gb} state={ramState(gb)} onClick={() => setForm((f) => ({ ...f, ram_gb: f.ram_gb === gb ? null : gb }))} style={{ minWidth: 56, alignItems: 'center' }}>{lbl}</Tile>
           })}
-          <input type="number" min={1} max={ramManualMax} step={ramStep || 1} className="lx-input" style={{ width: 110 }} placeholder="manuell GB"
+          <input type="number" min={1} max={ramManualMax} step={ramStep || 1} className="lx-input" style={{ width: 110 }} placeholder={t('wizard.step2.manualGb', { defaultValue: 'manual GB' })}
             value={form.ram_gb ?? ''} onChange={(e) => setForm((f) => ({ ...f, ram_gb: e.target.value ? parseInt(e.target.value, 10) : null }))} />
         </div>
         {comboHint && form.vcpu_count && form.ram_gb && (
@@ -870,7 +884,7 @@ function VirtualHw({ form, setForm, selectedProduct, ramSteps, vcpuTiles, ramMan
             color: comboHint.status === 'ok' ? 'var(--lx-state-up)' : comboHint.status === 'special' ? 'var(--lx-state-paused)' : comboHint.status === 'invalid' ? 'var(--lx-state-down)' : 'var(--lx-text-muted)',
           }}>
             {comboHint.status === 'ok'
-              ? `✓ passt zur Matrix${comboHint.ram_min != null ? ` (erlaubt ${comboHint.ram_min}–${comboHint.ram_max} GB)` : ''}`
+              ? `${t('wizard.step2.comboOk', { defaultValue: '✓ matches the matrix' })}${comboHint.ram_min != null ? t('wizard.step2.comboRange', { defaultValue: ' (allowed {{min}}–{{max}} GB)', min: comboHint.ram_min, max: comboHint.ram_max }) : ''}`
               : comboHint.message}
           </div>
         )}
@@ -888,17 +902,20 @@ function StorageSection({ form, setForm, storageOptions, multiStorage, storageMa
   multiStorage: boolean
   storageManualMax: number
 }) {
+  const { t } = useTranslation('server_manager')
   const disks = form.storage_disks
   const isWindows = (form.os_type || '').toLowerCase() === 'windows' || (form.os_family_id || '').toUpperCase() === 'WIN'
   const setDisks = (next: StorageDisk[]) => setForm((f) => ({ ...f, storage_disks: next }))
   const sharedProduct = disks.find((d) => d.disk_id)?.disk_id || storageOptions[0]?.id || ''
-  const rowWord = !multiStorage && isWindows ? 'Partition' : 'Volume'
+  const rowWord = !multiStorage && isWindows
+    ? t('wizard.storage.partition', { defaultValue: 'Partition' })
+    : t('wizard.storage.volume', { defaultValue: 'Volume' })
 
   if (storageOptions.length === 0) {
     return (
       <div style={card}>
-        <label style={fieldLabel}>Storage</label>
-        <div style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--lx-text-muted)' }}>Keine Storage-Produkte für diese Auswahl verfügbar.</div>
+        <label style={fieldLabel}>{t('wizard.storage.label', { defaultValue: 'Storage' })}</label>
+        <div style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--lx-text-muted)' }}>{t('wizard.storage.noProducts', { defaultValue: 'No storage products available for this selection.' })}</div>
       </div>
     )
   }
@@ -920,11 +937,11 @@ function StorageSection({ form, setForm, storageOptions, multiStorage, storageMa
 
   return (
     <div style={card}>
-      <label style={fieldLabel}>{multiStorage ? 'Storage — mehrere Produkte erlaubt' : 'Storage — ein Produkt pro Server'}</label>
+      <label style={fieldLabel}>{multiStorage ? t('wizard.storage.multiAllowed', { defaultValue: 'Storage — multiple products allowed' }) : t('wizard.storage.singleProduct', { defaultValue: 'Storage — one product per server' })}</label>
 
       {!multiStorage && (
         <>
-          <span style={{ fontSize: '0.66rem', color: 'var(--lx-text-muted)' }}>Storage-Produkt</span>
+          <span style={{ fontSize: '0.66rem', color: 'var(--lx-text-muted)' }}>{t('wizard.storage.product', { defaultValue: 'Storage product' })}</span>
           <div style={tileRow}>
             {storageOptions.map((sp) => (
               <Tile key={sp.id} state={sharedProduct === sp.id ? 'selected' : 'normal'} onClick={() => pickShared(sp.id)} style={{ minWidth: 150 }}>
@@ -940,7 +957,7 @@ function StorageSection({ form, setForm, storageOptions, multiStorage, storageMa
         <div key={idx} style={{ border: '1px solid var(--lx-border-soft)', borderRadius: 'var(--lx-radius-sm)', padding: '0.6rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={fieldLabel}>{rowWord} {idx + 1}</span>
-            <button type="button" onClick={() => removeLine(idx)} title="Entfernen" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--lx-state-down)', fontSize: '0.95rem' }}>×</button>
+            <button type="button" onClick={() => removeLine(idx)} title={t('wizard.storage.remove', { defaultValue: 'Remove' })} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--lx-state-down)', fontSize: '0.95rem' }}>×</button>
           </div>
           {multiStorage && (
             <div style={tileRow}>
@@ -955,7 +972,7 @@ function StorageSection({ form, setForm, storageOptions, multiStorage, storageMa
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <input
               className="lx-input" style={{ flex: '1 1 160px' }}
-              placeholder={isWindows ? 'C:\\ oder D:\\' : '/ oder /data'}
+              placeholder={isWindows ? t('wizard.storage.mountWindows', { defaultValue: 'C:\\ or D:\\' }) : t('wizard.storage.mountUnix', { defaultValue: '/ or /data' })}
               value={entry.mount}
               onChange={(e) => updateLine(idx, { mount: e.target.value })}
             />
@@ -971,8 +988,8 @@ function StorageSection({ form, setForm, storageOptions, multiStorage, storageMa
       ))}
 
       {atLimit
-        ? <span style={{ fontSize: '0.7rem', color: 'var(--lx-state-paused)' }}>Maximal 4 Partitionen erreicht.</span>
-        : <div><Btn label={!multiStorage && isWindows ? '+ Partition' : '+ Storage'} onClick={addLine} /></div>}
+        ? <span style={{ fontSize: '0.7rem', color: 'var(--lx-state-paused)' }}>{t('wizard.storage.maxPartitions', { defaultValue: 'Maximum of 4 partitions reached.' })}</span>
+        : <div><Btn label={!multiStorage && isWindows ? t('wizard.storage.addPartition', { defaultValue: '+ Partition' }) : t('wizard.storage.addStorage', { defaultValue: '+ Storage' })} onClick={addLine} /></div>}
     </div>
   )
 }
@@ -985,6 +1002,7 @@ function Step3({ catalog, form, issues, isPhysical }: {
   issues: ValidationIssue[]
   isPhysical: boolean
 }) {
+  const { t } = useTranslation('server_manager')
   const env = catalog.environments.find((e) => e.id === form.environment_id)
   const profile = catalog.profiles.find((p) => p.id === (env?.profile_id ?? ''))
   const product = catalog.products.find((p) => p.id === form.product_id)
@@ -994,22 +1012,22 @@ function Step3({ catalog, form, issues, isPhysical }: {
   const cpu = catalog.hardware.cpu_options.find((c) => c.id === form.cpu_id)
 
   const rows: [string, string][] = [
-    ['Name', form.name],
-    ['Hostname', form.hostname || '—'],
-    ['Umgebung', env ? (env.provider_label ? `${env.provider_label} · ${env.label}` : env.label) : form.environment_id],
-    ['Profil', profile?.label ?? '—'],
-    ['Produkt', product?.label ?? '—'],
+    [t('wizard.step3.rowName', { defaultValue: 'Name' }), form.name],
+    [t('wizard.step3.rowHostname', { defaultValue: 'Hostname' }), form.hostname || '—'],
+    [t('wizard.step3.rowEnvironment', { defaultValue: 'Environment' }), env ? (env.provider_label ? `${env.provider_label} · ${env.label}` : env.label) : form.environment_id],
+    [t('wizard.step3.rowProfile', { defaultValue: 'Profile' }), profile?.label ?? '—'],
+    [t('wizard.step3.rowProduct', { defaultValue: 'Product' }), product?.label ?? '—'],
   ]
-  if (sc) rows.push(['Service-Klasse', `${sc.label}${sc.sub_label ? ` — ${sc.sub_label}` : ''}`])
-  if (variant) rows.push(['OS-Familie', variant.label])
-  if (version) rows.push(['OS-Version', `${version.label} — ${(version.lifecycle || '').replace(/_/g, ' ')}`])
-  rows.push(['Typ', form.server_type], ['Status', form.status], ['Tags', form.tags || '—'])
+  if (sc) rows.push([t('wizard.step3.rowServiceClass', { defaultValue: 'Service class' }), `${sc.label}${sc.sub_label ? ` — ${sc.sub_label}` : ''}`])
+  if (variant) rows.push([t('wizard.step3.rowOsFamily', { defaultValue: 'OS family' }), variant.label])
+  if (version) rows.push([t('wizard.step3.rowOsVersion', { defaultValue: 'OS version' }), `${version.label} — ${(version.lifecycle || '').replace(/_/g, ' ')}`])
+  rows.push([t('wizard.step3.rowType', { defaultValue: 'Type' }), form.server_type], [t('wizard.step3.rowStatus', { defaultValue: 'Status' }), form.status], [t('wizard.step3.rowTags', { defaultValue: 'Tags' }), form.tags || '—'])
   if (isPhysical) {
-    rows.push(['CPU', cpu ? `${form.cpu_count}× ${cpu.label}` : '—'])
-    rows.push(['RAM', form.ram_gb ? `${form.ram_gb} GB` : '—'])
+    rows.push([t('wizard.step3.rowCpu', { defaultValue: 'CPU' }), cpu ? `${form.cpu_count}× ${cpu.label}` : '—'])
+    rows.push([t('wizard.step3.rowRam', { defaultValue: 'RAM' }), form.ram_gb ? `${form.ram_gb} GB` : '—'])
   } else {
-    rows.push(['vCPU', form.vcpu_count ? String(form.vcpu_count) : '—'])
-    rows.push(['RAM', form.ram_gb ? `${form.ram_gb} GB` : '—'])
+    rows.push([t('wizard.step3.rowVcpu', { defaultValue: 'vCPU' }), form.vcpu_count ? String(form.vcpu_count) : '—'])
+    rows.push([t('wizard.step3.rowRam', { defaultValue: 'RAM' }), form.ram_gb ? `${form.ram_gb} GB` : '—'])
   }
 
   const totalGb = form.storage_disks.reduce((sum, d) => sum + (d.size_gb || 0), 0)
@@ -1026,7 +1044,7 @@ function Step3({ catalog, form, issues, isPhysical }: {
         {form.storage_disks.length > 0 && (
           <>
             <div style={{ height: 1, background: 'var(--lx-border-soft)' }} />
-            <label style={fieldLabel}>Storage</label>
+            <label style={fieldLabel}>{t('wizard.step3.storage', { defaultValue: 'Storage' })}</label>
             {form.storage_disks.map((d, i) => {
               const item = catalog.hardware.storage_options.find((s) => s.id === d.disk_id)
               const szStr = d.size_gb >= 1024 ? `${(d.size_gb / 1024).toFixed(1)} TB` : `${d.size_gb} GB`
@@ -1039,7 +1057,7 @@ function Step3({ catalog, form, issues, isPhysical }: {
             })}
             {totalGb > 0 && (
               <span style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--lx-state-up)', paddingLeft: '0.5rem' }}>
-                Gesamt: {totalGb >= 1024 ? `${(totalGb / 1024).toFixed(1)} TB` : `${totalGb} GB`}
+                {t('wizard.step3.total', { defaultValue: 'Total: {{size}}', size: totalGb >= 1024 ? `${(totalGb / 1024).toFixed(1)} TB` : `${totalGb} GB` })}
               </span>
             )}
           </>
@@ -1048,9 +1066,9 @@ function Step3({ catalog, form, issues, isPhysical }: {
 
       {/* Validation panel */}
       <div style={card}>
-        <label style={fieldLabel}>Regelprüfung</label>
+        <label style={fieldLabel}>{t('wizard.step3.ruleCheck', { defaultValue: 'Rule check' })}</label>
         {issues.length === 0
-          ? <span style={{ fontSize: '0.76rem', color: 'var(--lx-state-up)' }}>✓ Alle Regeln erfüllt.</span>
+          ? <span style={{ fontSize: '0.76rem', color: 'var(--lx-state-up)' }}>{t('wizard.step3.rulesOk', { defaultValue: '✓ All rules satisfied.' })}</span>
           : issues.map((iss, i) => {
             const isErr = iss.severity === 'error'
             const col = isErr ? 'var(--lx-state-down)' : 'var(--lx-state-paused)'
@@ -1062,7 +1080,7 @@ function Step3({ catalog, form, issues, isPhysical }: {
             )
           })}
         {issues.some((i) => i.severity === 'error') && (
-          <span style={{ fontSize: '0.7rem', color: 'var(--lx-text-muted)' }}>Bitte alle Fehler beheben, bevor gespeichert werden kann.</span>
+          <span style={{ fontSize: '0.7rem', color: 'var(--lx-text-muted)' }}>{t('wizard.step3.fixErrors', { defaultValue: 'Please fix all errors before saving.' })}</span>
         )}
       </div>
     </div>
