@@ -12,9 +12,10 @@ import type {
 
 // ─── Shared styles (var(--lx-*) theme tokens) ───────────────────────────────
 
+// Card-like panels carry the host `lx-card` class so they pick up the host's
+// liquid-glass refraction. The base glass surface (background/border/blur) comes
+// from the host stylesheet — only structural layout stays inline here.
 const card: React.CSSProperties = {
-  background: 'var(--lx-surface-glass, var(--lx-surface))', backdropFilter: 'blur(16px) saturate(160%)', WebkitBackdropFilter: 'blur(16px) saturate(160%)',
-  border: '1px solid var(--lx-border-soft)',
   borderRadius: 'var(--lx-radius-md)',
   padding: '1rem',
   display: 'flex',
@@ -464,7 +465,7 @@ function Step1({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-      <div style={card}>
+      <div className="lx-card" style={card}>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <div style={{ flex: '1 1 220px', display: 'flex', flexDirection: 'column', gap: 3 }}>
             <label style={fieldLabel}>{t('wizard.step1.serverName', { defaultValue: 'Server name *' })}</label>
@@ -478,7 +479,7 @@ function Step1({
       </div>
 
       {/* Provider */}
-      <div style={card}>
+      <div className="lx-card" style={card}>
         <label style={fieldLabel}>{t('wizard.step1.provider', { defaultValue: 'Provider *' })}</label>
         <div style={tileRow}>
           {catalog.providers.map((p) => (
@@ -603,7 +604,7 @@ function Step1({
 
       {/* Profile features */}
       {profile && (
-        <div style={card}>
+        <div className="lx-card" style={card}>
           <label style={fieldLabel}>{t('wizard.step1.profileFeatures', { defaultValue: 'Profile features — {{name}}', name: profile.label })}</label>
           <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
             {profile.features.map((feat) => {
@@ -621,7 +622,7 @@ function Step1({
       )}
 
       {/* Status / tags / notes */}
-      <div style={card}>
+      <div className="lx-card" style={card}>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <div style={{ flex: '1 1 160px', display: 'flex', flexDirection: 'column', gap: 3 }}>
             <label style={fieldLabel}>{t('wizard.step1.status', { defaultValue: 'Status' })}</label>
@@ -718,7 +719,7 @@ function PhysicalHw({ catalog, form, setForm, allowedCpu, ramSteps, socketOption
 
   return (
     <>
-      <div style={card}>
+      <div className="lx-card" style={card}>
         <label style={fieldLabel}>{t('wizard.step2.cpuModel', { defaultValue: 'CPU model *' })}</label>
         <div style={tileRow}>
           {cpus.map((c) => (
@@ -740,7 +741,7 @@ function PhysicalHw({ catalog, form, setForm, allowedCpu, ramSteps, socketOption
         </div>
       </div>
 
-      <div style={card}>
+      <div className="lx-card" style={card}>
         <label style={fieldLabel}>{t('wizard.step2.ramTotal', { defaultValue: 'RAM (GB total) *' })}</label>
         <div style={{ ...tileRow, alignItems: 'center' }}>
           {ramSteps.map((gb) => (
@@ -857,7 +858,7 @@ function VirtualHw({ form, setForm, selectedProduct, ramSteps, vcpuTiles, ramMan
         </div>
       )}
 
-      <div style={card}>
+      <div className="lx-card" style={card}>
         <label style={fieldLabel}>{t('wizard.step2.vcpuCount', { defaultValue: 'vCPU count *' })}</label>
         <div style={{ ...tileRow, alignItems: 'center' }}>
           {vcpuTileValues.map((v) => (
@@ -868,7 +869,7 @@ function VirtualHw({ form, setForm, selectedProduct, ramSteps, vcpuTiles, ramMan
         </div>
       </div>
 
-      <div style={card}>
+      <div className="lx-card" style={card}>
         <label style={fieldLabel}>{t('wizard.step2.ram', { defaultValue: 'RAM (GB) *' })}</label>
         <div style={{ ...tileRow, alignItems: 'center' }}>
           {ramTileValues.map((gb) => {
@@ -913,7 +914,7 @@ function StorageSection({ form, setForm, storageOptions, multiStorage, storageMa
 
   if (storageOptions.length === 0) {
     return (
-      <div style={card}>
+      <div className="lx-card" style={card}>
         <label style={fieldLabel}>{t('wizard.storage.label', { defaultValue: 'Storage' })}</label>
         <div style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--lx-text-muted)' }}>{t('wizard.storage.noProducts', { defaultValue: 'No storage products available for this selection.' })}</div>
       </div>
@@ -936,7 +937,7 @@ function StorageSection({ form, setForm, storageOptions, multiStorage, storageMa
   const atLimit = !multiStorage && isWindows && disks.length >= 4
 
   return (
-    <div style={card}>
+    <div className="lx-card" style={card}>
       <label style={fieldLabel}>{multiStorage ? t('wizard.storage.multiAllowed', { defaultValue: 'Storage — multiple products allowed' }) : t('wizard.storage.singleProduct', { defaultValue: 'Storage — one product per server' })}</label>
 
       {!multiStorage && (
@@ -1034,7 +1035,7 @@ function Step3({ catalog, form, issues, isPhysical }: {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-      <div style={card}>
+      <div className="lx-card" style={card}>
         {rows.map(([k, v]) => (
           <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
             <span style={{ ...fieldLabel, width: 140, flexShrink: 0 }}>{k}</span>
@@ -1065,7 +1066,7 @@ function Step3({ catalog, form, issues, isPhysical }: {
       </div>
 
       {/* Validation panel */}
-      <div style={card}>
+      <div className="lx-card" style={card}>
         <label style={fieldLabel}>{t('wizard.step3.ruleCheck', { defaultValue: 'Rule check' })}</label>
         {issues.length === 0
           ? <span style={{ fontSize: '0.76rem', color: 'var(--lx-state-up)' }}>{t('wizard.step3.rulesOk', { defaultValue: '✓ All rules satisfied.' })}</span>

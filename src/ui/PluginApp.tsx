@@ -12,9 +12,10 @@ import ServerWizard from './ServerWizard'
 
 // ─── Shared style helpers ───────────────────────────────────────────────────
 
+// Card-like panels carry the host `lx-card` class so they pick up the host's
+// liquid-glass refraction. The base glass surface (background/border/blur) comes
+// from the host stylesheet — only structural layout stays inline here.
 const cardStyle: React.CSSProperties = {
-  background: 'var(--lx-surface-glass, var(--lx-surface))', backdropFilter: 'blur(16px) saturate(160%)', WebkitBackdropFilter: 'blur(16px) saturate(160%)',
-  border: '1px solid var(--lx-border-soft)',
   borderRadius: 'var(--lx-radius-md)',
   overflow: 'hidden',
 }
@@ -251,7 +252,7 @@ function ServerListView({
       )}
 
       {filtered.length > 0 && (
-        <div style={cardStyle}>
+        <div className="lx-card" style={cardStyle}>
           <table className="lx-table">
             <thead>
               <tr>
@@ -375,7 +376,7 @@ function SettingsView() {
       {error && <ErrorBox msg={error} />}
       {notice && <NoticeBox msg={notice} />}
 
-      <div style={{ ...cardStyle, padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.25rem' }}>
+      <div className="lx-card" style={{ ...cardStyle, padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.25rem' }}>
         <div className="lx-section-title">{t('settings.catalogConfig', { defaultValue: 'Catalog configuration' })}</div>
         <div style={{ fontSize: '0.78rem', color: 'var(--lx-text-muted)', lineHeight: 1.5 }}>
           {t('settings.catalogHint', { defaultValue: 'Directory containing hardware.yml, environments.yml, profiles.yml, products.yml, settings.yml. Leave empty for the bundled default catalog.' })}
@@ -407,7 +408,7 @@ function SettingsView() {
 
       {/* Products preview */}
       {catalog && catalog.products.length > 0 && (
-        <div style={{ ...cardStyle, marginTop: '1.25rem' }}>
+        <div className="lx-card" style={{ ...cardStyle, marginTop: '1.25rem' }}>
           <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--lx-border-soft)', background: 'var(--lx-elevated-glass, var(--lx-elevated))' }} className="lx-section-title">
             {t('settings.products', { defaultValue: 'Products' })}
           </div>

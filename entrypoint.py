@@ -25,9 +25,12 @@ Events emitted (subscribe from any other plugin)
                                      environment_id, server_type}
   server_manager:status_changed   — {server_id, server_name, old_status, new_status}
 """
+import asyncio
+import time
+
 from nicegui import ui
 
-from core.api import ModuleManifest, db_instance
+from core.api import ModuleManifest, PluginHealthStatus, db_instance
 
 # TODO(agent): `main_layout` lives in core's internal `ui.layout`, not in the
 # stable `core.api` surface — re-export it from core.api (or drop this NiceGUI
@@ -52,7 +55,7 @@ from .app.ui.page import render_server_manager_page
 manifest = ModuleManifest(
     id="lyndrix.plugin.server_manager",
     name="Server Manager",
-    version="0.3.0",
+    version="0.3.1",
     description=(
         "Central server inventory with configurable hardware catalogs, "
         "combination rules, and event-bus hooks for downstream order workflows."
@@ -104,6 +107,60 @@ def render_settings_ui(ctx):
 
 def render_dashboard_widget(ctx):
     _render_widget(ctx)
+
+
+# ── Health ────────────────────────────────────────────────────────────────────
+
+async def health(ctx) -> PluginHealthStatus:
+    """Functional health probe.
+
+    This plugin is a DB-backed inventory, so "healthy" means the persistence
+    layer is genuinely usable — not merely that ``setup()`` ran. We confirm the
+    DB is connected, that the tables were bootstrapped (``svc.is_ready``), and
+    that a real query against ``server_manager_servers`` succeeds. The catalog
+    (YAML hardware/rules) must also be loaded for add/validate flows to work.
+    The sync ORM call is offloaded so the probe never blocks the event loop.
+    """
+    start = time.perf_counter()
+
+    if not db_instance.is_connected:
+        return PluginHealthStatus(
+            status="error",
+            details={"reason": "db_unavailable", "db_connected": False},
+        )
+
+    if not svc.is_ready:
+        return PluginHealthStatus(
+            status="error",
+            details={"reason": "tables_not_initialized", "db_connected": True, "ready": False},
+        )
+
+    try:
+        servers = await asyncio.to_thread(svc.get_all_servers)
+    except Exception as exc:  # tables present but the query path is broken
+        return PluginHealthStatus(
+            status="error",
+            details={"reason": "db_query_failed", "error": str(exc)},
+            latency_ms=round((time.perf_counter() - start) * 1000, 1),
+        )
+
+    latency = round((time.perf_counter() - start) * 1000, 1)
+    catalog_loaded = bool(getattr(svc, "catalog", None))
+    details = {
+        "db_connected": True,
+        "ready": True,
+        "servers": len(servers),
+        "catalog_loaded": catalog_loaded,
+    }
+    # DB works but the hardware catalog never loaded → CRUD reads work, but the
+    # guided add/validate workflows are broken. Usable-but-impaired = degraded.
+    if not catalog_loaded:
+        return PluginHealthStatus(
+            status="degraded",
+            details={**details, "reason": "catalog_not_loaded"},
+            latency_ms=latency,
+        )
+    return PluginHealthStatus(status="ok", details=details, latency_ms=latency)
 
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
