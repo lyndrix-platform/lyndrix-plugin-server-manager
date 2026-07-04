@@ -71,11 +71,11 @@ def render_step3(form: dict) -> None:
         for label, value in rows:
             with ui.row().classes("w-full justify-between gap-4"):
                 ui.label(label).classes(UIStyles.LABEL_FIELD + " w-36 shrink-0")
-                ui.label(str(value or "")).classes("text-xs text-slate-800 dark:text-zinc-100")
+                ui.label(str(value or "")).classes("text-xs text-[var(--lx-text)]")
 
         storage_vols = hp.get("storage_disks") or []
         if storage_vols:
-            ui.separator().classes("bg-slate-200 dark:bg-white/10 my-1")
+            ui.separator().classes("bg-[var(--lx-border-soft)] my-1")
             ui.label("Storage").classes(UIStyles.LABEL_FIELD)
             total_gb = 0
             for vol in storage_vols:
@@ -86,7 +86,7 @@ def render_step3(form: dict) -> None:
                 label_str = (item or {}).get("label") or vol.get("disk_id") or "—"
                 mount = vol.get("mount") or "—"
                 with ui.row().classes("w-full justify-between gap-4 pl-2"):
-                    ui.label(mount).classes("text-xs w-36 shrink-0 font-mono text-slate-600 dark:text-zinc-300")
+                    ui.label(mount).classes("text-xs w-36 shrink-0 font-mono text-[var(--lx-text-muted)]")
                     ui.label(f"{sz_str}  [{label_str}]").classes(UIStyles.TEXT_MUTED)
             if total_gb:
                 lbl = f"{total_gb//1024:.1f} TB" if total_gb >= 1024 else f"{total_gb} GB"

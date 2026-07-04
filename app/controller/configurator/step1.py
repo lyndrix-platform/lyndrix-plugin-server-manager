@@ -6,6 +6,20 @@ from core.api import UIStyles
 
 from ..service import server_manager_service as svc
 
+# Catalog "color" fields are free-text Tailwind colour names (see catalog/*.yml).
+# Map them to the nearest --lx-state-* token so profile/lifecycle indicators
+# render via the theme engine instead of a hardcoded hue (Theming v2 T1 sweep).
+_STATE_BY_COLOR = {
+    "emerald": "up", "green": "up", "teal": "up", "lime": "up", "cyan": "up",
+    "red": "down", "rose": "down", "pink": "down",
+    "amber": "paused", "orange": "paused", "yellow": "paused",
+}
+
+
+def _state_for_color(color: str) -> str:
+    """Nearest --lx-state-* bucket for a catalog Tailwind colour name."""
+    return _STATE_BY_COLOR.get((color or "").lower(), "unknown")
+
 
 def _tile_cls(*, selected: bool, disabled: bool = False) -> str:
     """Themed selectable-tile classes for the given state (border + bg + text)."""
@@ -159,10 +173,13 @@ def render_step1(form: dict, on_features_refresh) -> None:  # noqa: C901
             if profile_id:
                 profile = svc.catalog.profiles().get(profile_id) or {}
                 color = profile.get("color", "blue")
+                state = _state_for_color(color)
                 with ui.row().classes("items-center gap-2"):
-                    ui.icon(profile.get("icon", "info"), size="14px").classes(f"text-{color}-400")
+                    ui.icon(profile.get("icon", "info"), size="14px").classes(
+                        f"text-[var(--lx-state-{state})]"
+                    )
                     ui.label(profile.get("label", profile_id)).classes(
-                        f"text-xs font-semibold text-{color}-300"
+                        f"text-xs font-semibold text-[var(--lx-state-{state})]"
                     )
                     allowed_types = profile.get("allowed_server_types", [])
                     if allowed_types:
@@ -363,12 +380,14 @@ def render_step1(form: dict, on_features_refresh) -> None:  # noqa: C901
                             vid = ver["id"]
                             is_sel = form.get("os_version_id") == vid
                             lc = ver.get("lifecycle", "supported")
-                            lc_color = {
+                            # preferred → up, exceptional_until → paused,
+                            # supported_for_legacy → unknown; "supported" (the
+                            # default/neutral option) falls into unknown too.
+                            lc_state = _state_for_color({
                                 "preferred": "emerald",
-                                "supported": "blue",
                                 "exceptional_until": "amber",
                                 "supported_for_legacy": "zinc",
-                            }.get(lc, "zinc")
+                            }.get(lc, "blue"))
                             tip = lc.replace("_", " ")
                             if ver.get("end_of_support"):
                                 tip += f" until {ver['end_of_support']}"
@@ -378,7 +397,7 @@ def render_step1(form: dict, on_features_refresh) -> None:  # noqa: C901
                             with tile:
                                 ui.label(ver.get("label", vid)).classes("text-xs font-semibold")
                                 ui.element("div").classes(
-                                    f"w-1.5 h-1.5 rounded-full bg-{lc_color}-400"
+                                    f"w-1.5 h-1.5 rounded-full bg-[var(--lx-state-{lc_state})]"
                                 )
                             if not is_sel:
                                 tile.on("click", lambda _, _vid=vid: (
@@ -419,7 +438,7 @@ def render_step1(form: dict, on_features_refresh) -> None:  # noqa: C901
     _render_product_area()
     _render_product_extras_area()
 
-    ui.separator().classes("bg-slate-200 dark:bg-white/10")
+    ui.separator().classes("bg-[var(--lx-border-soft)]")
 
     with ui.row().classes("w-full gap-4"):
         ui.select(

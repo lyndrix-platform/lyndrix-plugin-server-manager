@@ -18,7 +18,7 @@ def render_server_manager_page(ctx) -> None:
     ):
         _render_header()
         _render_stats_row()
-        ui.separator().classes("border-slate-200 dark:border-white/5")
+        ui.separator().classes("border-[var(--lx-border-soft)]")
         _render_list(ctx)
 
 
@@ -40,7 +40,7 @@ def _render_stats_row() -> None:
     if svc.is_ready:
         stats = svc.get_stats()
         with ui.row().classes("w-full gap-4 flex-wrap"):
-            _mini_stat("Total Servers", stats["total"], "dns", "blue")
+            _mini_stat("Total Servers", stats["total"], "dns")
             for env_id, count in sorted(stats.get("by_env", {}).items()):
                 env = svc.catalog.environments().get(env_id)
                 label = env["label"] if env else env_id
@@ -63,9 +63,13 @@ def _render_list(ctx) -> None:
         refresh_fn[0] = fn
 
 
-def _mini_stat(label: str, value, icon: str, color: str = "blue") -> None:
+def _mini_stat(label: str, value, icon: str, color: str | None = None) -> None:
     with ui.card().classes(UIStyles.CARD_BASE + " flex-1 min-w-32 p-4 gap-1"):
         with ui.row().classes("items-center gap-2"):
-            ui.icon(icon, size="16px").classes(f"text-{color}-400")
+            # `color` is an optional catalog-driven (per-environment) accent; the
+            # default headline stat uses the app's own accent instead of a
+            # hardcoded hue.
+            icon_cls = UIStyles.ICON_PRIMARY if color is None else f"text-{color}-400"
+            ui.icon(icon, size="16px").classes(icon_cls)
             ui.label(label).classes(UIStyles.LABEL_MINI)
         ui.label(str(value)).classes(UIStyles.TITLE_H2)
