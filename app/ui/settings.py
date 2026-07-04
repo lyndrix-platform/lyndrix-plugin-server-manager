@@ -76,7 +76,7 @@ def render_settings_ui(ctx):
                     _stat_card("Legacy Rules", len(hw.get_combination_rules()), "rule")
 
                 # Profiles accordion
-                with ui.card().classes(UIStyles.PANEL_SUBTLE + " w-full p-4 gap-3 rounded-xl"):
+                with ui.card().classes(UIStyles.PANEL_SUBTLE + " w-full p-4 gap-3 rounded-[var(--lx-radius-xl)]"):
                     ui.label("Environment Profiles").classes(UIStyles.LABEL_HEADING)
                     for profile in profiles.get_all():
                         profile_id = profile["id"]
@@ -84,7 +84,7 @@ def render_settings_ui(ctx):
                         with ui.expansion(
                             f"{profile.get('label', profile_id)}  [{profile_id}]",
                             icon=profile.get("icon", "info"),
-                        ).classes("w-full border border-slate-200 dark:border-white/5 rounded"):
+                        ).classes("w-full border border-[var(--lx-border-soft)] rounded-[var(--lx-radius)]"):
                             ui.label(profile.get("description", "")).classes(UIStyles.TEXT_HINT + " mb-2")
                             allowed = ", ".join(profile.get("allowed_server_types", []))
                             ui.label(f"Allowed server types: {allowed}").classes(UIStyles.TEXT_MUTED)
@@ -93,7 +93,7 @@ def render_settings_ui(ctx):
                             for feat in profiles.get_features(profile_id):
                                 avail = feat.get("available", True)
                                 icon = "check_circle" if avail else "cancel"
-                                col = UIStyles.ICON_SUCCESS if avail else "text-red-400"
+                                col = UIStyles.ICON_SUCCESS if avail else "text-[var(--lx-state-down)]"
                                 with ui.row().classes(f"items-start gap-2 {col} py-0.5"):
                                     ui.icon(icon, size="14px").classes("mt-0.5 shrink-0")
                                     with ui.column().classes("gap-0"):
@@ -104,21 +104,21 @@ def render_settings_ui(ctx):
                             if rules:
                                 ui.label(f"Rules ({len(rules)}):").classes(UIStyles.LABEL_FIELD + " mt-2")
                                 for rule in rules:
-                                    sev_color = "text-red-400" if rule.get("severity") == "error" else "text-amber-400"
+                                    sev_color = "text-[var(--lx-state-down)]" if rule.get("severity") == "error" else "text-[var(--lx-state-paused)]"
                                     with ui.row().classes(f"items-start gap-2 {sev_color} py-0.5"):
                                         ui.icon("rule", size="13px").classes("mt-0.5 shrink-0")
                                         ui.label(f"[{rule.get('type', '?')}] {rule.get('description', rule['id'])}") \
                                             .classes("text-xs")
 
                 # Products accordion
-                with ui.card().classes(UIStyles.PANEL_SUBTLE + " w-full p-4 gap-3 rounded-xl"):
+                with ui.card().classes(UIStyles.PANEL_SUBTLE + " w-full p-4 gap-3 rounded-[var(--lx-radius-xl)]"):
                     ui.label("Server Products").classes(UIStyles.LABEL_HEADING)
                     for prod in products.get_all():
                         compatible = ", ".join(prod.get("compatible_profiles", []))
                         with ui.expansion(
                             f"{prod.get('label', prod['id'])}  [{prod['id']}]",
                             icon=prod.get("icon", "inventory_2"),
-                        ).classes("w-full border border-slate-200 dark:border-white/5 rounded"):
+                        ).classes("w-full border border-[var(--lx-border-soft)] rounded-[var(--lx-radius)]"):
                             ui.label(prod.get("description", "")).classes(UIStyles.TEXT_HINT + " mb-1")
                             ui.label(f"Profiles: {compatible}").classes(UIStyles.TEXT_MUTED)
                             types = ", ".join(prod.get("compatible_server_types", []))
@@ -138,14 +138,14 @@ def render_settings_ui(ctx):
                             if rules:
                                 ui.label(f"Product rules ({len(rules)}):").classes(UIStyles.LABEL_FIELD + " mt-2")
                                 for rule in rules:
-                                    sev_color = "text-red-400" if rule.get("severity") == "error" else "text-amber-400"
+                                    sev_color = "text-[var(--lx-state-down)]" if rule.get("severity") == "error" else "text-[var(--lx-state-paused)]"
                                     with ui.row().classes(f"items-start gap-2 {sev_color}"):
                                         ui.icon("rule", size="13px").classes("mt-0.5 shrink-0")
                                         ui.label(f"[{rule.get('type', '?')}] {rule.get('description', rule['id'])}") \
                                             .classes("text-xs")
 
                 # Providers & Stages table
-                with ui.card().classes(UIStyles.PANEL_SUBTLE + " w-full p-4 gap-3 rounded-xl"):
+                with ui.card().classes(UIStyles.PANEL_SUBTLE + " w-full p-4 gap-3 rounded-[var(--lx-radius-xl)]"):
                     ui.label("Providers & Stages").classes(UIStyles.LABEL_HEADING)
                     for provider in envs.get_providers():
                         pid = provider["id"]
@@ -154,7 +154,7 @@ def render_settings_ui(ctx):
                         with ui.expansion(
                             f"{provider.get('label', pid)}{placeholder_tag}",
                             icon=provider.get("icon", "public"),
-                        ).classes("w-full border border-slate-200 dark:border-white/5 rounded"):
+                        ).classes("w-full border border-[var(--lx-border-soft)] rounded-[var(--lx-radius)]"):
                             with ui.row().classes("items-center gap-2 mb-1"):
                                 ui.badge(provider.get("profile_id", "edc"), color=color) \
                                     .classes("text-xs")
@@ -162,7 +162,7 @@ def render_settings_ui(ctx):
                                     .classes(UIStyles.TEXT_MUTED)
                             ui.label(provider.get("description", "")).classes(UIStyles.TEXT_HINT + " mb-2")
                             for stage in envs.get_stages_for_provider(pid):
-                                with ui.row().classes("w-full items-start gap-3 py-1 pl-2 border-l border-slate-200 dark:border-white/10"):
+                                with ui.row().classes("w-full items-start gap-3 py-1 pl-2 border-l border-[var(--lx-border-soft)]"):
                                     ui.badge(stage["label"], color=stage.get("color", "grey")) \
                                         .classes("text-xs shrink-0")
                                     with ui.column().classes("gap-0"):
@@ -174,7 +174,7 @@ def render_settings_ui(ctx):
         _refresh_preview()
 
         # ── Event bus documentation ───────────────────────────────────────────
-        with ui.card().classes(UIStyles.PANEL_SUBTLE + " w-full p-5 gap-3 rounded-xl"):
+        with ui.card().classes(UIStyles.PANEL_SUBTLE + " w-full p-5 gap-3 rounded-[var(--lx-radius-xl)]"):
             ui.label("Event Bus — Hook Points").classes(UIStyles.TITLE_H3)
             ui.label(
                 "Other plugins can subscribe to these events to react to server changes."
@@ -194,14 +194,14 @@ def render_settings_ui(ctx):
                  "{server_id, server_name, old_status, new_status}. Fired on status transitions."),
             ]
             for event, desc in events:
-                with ui.row().classes("w-full items-start gap-3 py-1 border-b border-slate-200 dark:border-white/5"):
+                with ui.row().classes("w-full items-start gap-3 py-1 border-b border-[var(--lx-border-soft)]"):
                     ui.label(event).classes(UIStyles.STATUS_TEXT_SUCCESS + " font-mono w-72 shrink-0")
                     ui.label(desc).classes(UIStyles.TEXT_MUTED)
 
 
 def _stat_card(label: str, count: int, icon: str) -> None:
-    with ui.card().classes(UIStyles.PANEL_SUBTLE + " p-3 gap-1 min-w-28 rounded-xl"):
+    with ui.card().classes(UIStyles.PANEL_SUBTLE + " p-3 gap-1 min-w-28 rounded-[var(--lx-radius-xl)]"):
         with ui.row().classes("items-center gap-2"):
             ui.icon(icon, size="16px").classes(UIStyles.ICON_MUTED)
             ui.label(label).classes(UIStyles.TEXT_MUTED)
-        ui.label(str(count)).classes("text-2xl font-bold text-slate-800 dark:text-zinc-100")
+        ui.label(str(count)).classes("text-2xl font-bold text-[var(--lx-text)]")

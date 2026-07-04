@@ -10,7 +10,7 @@ from ..controller.service import server_manager_service as svc
 _STATUS_STYLE = {
     "active":        UIStyles.STATUS_TEXT_SUCCESS,
     "ordered":       UIStyles.STATUS_TEXT_WARNING,
-    "provisioning":  "text-xs text-cyan-400",
+    "provisioning":  f"text-xs {UIStyles.ICON_INFO}",
     "decommissioned": UIStyles.STATUS_TEXT_NEUTRAL,
 }
 
@@ -24,7 +24,7 @@ def render_dashboard_widget(ctx):
             ui.button(
                 icon="open_in_new",
                 on_click=lambda: ui.navigate.to("/server-manager"),
-            ).props("flat round dense size=xs color=blue-grey")
+            ).props("flat round dense size=xs color=primary")
 
         stats_label = ui.label("Loading…").classes(UIStyles.TEXT_MUTED)
         status_row = ui.row().classes("w-full gap-2 flex-wrap")

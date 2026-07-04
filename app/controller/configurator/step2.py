@@ -69,7 +69,7 @@ def render_step2(form: dict, on_change=lambda: None) -> None:  # noqa: C901
             .classes(UIStyles.TEXT_MUTED)
     else:
         ui.label(f"No product selected · {stype}").classes(UIStyles.TEXT_MUTED)
-    ui.separator().classes("bg-slate-200 dark:bg-white/10")
+    ui.separator().classes("bg-[var(--lx-border-soft)]")
 
     if stype == "physical":
         _render_physical_hw(form, hw, cpu_allowed, storage_allowed,
@@ -162,13 +162,13 @@ def _render_storage(  # noqa: C901
                 row_word = "Partition" if (not multi_storage and is_win) else "Volume"
                 for idx, entry in enumerate(storage_disks):
                     with ui.card().classes(
-                        UIStyles.PANEL_SUBTLE + " w-full p-3 gap-2 rounded-lg"
+                        UIStyles.PANEL_SUBTLE + " w-full p-3 gap-2 rounded-[var(--lx-radius-lg)]"
                     ):
                         with ui.row().classes("w-full items-center justify-between gap-2"):
                             ui.label(f"{row_word} {idx + 1}").classes(UIStyles.LABEL_FIELD)
                             ui.button(icon="delete", on_click=lambda _, i=idx: (
                                 storage_disks.pop(i), _refresh(), on_change(),
-                            )).props("flat round dense size=xs color=red-4")
+                            )).props("flat round dense size=xs color=negative")
 
                         # Per-line product picker for multi-product (EDC) profiles.
                         if multi_storage:

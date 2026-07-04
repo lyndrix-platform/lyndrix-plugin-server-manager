@@ -45,9 +45,11 @@ function tileStyle(state: TileState): React.CSSProperties {
     lineHeight: 1.2,
     cursor: 'pointer',
     userSelect: 'none',
-    transition: 'all 0.12s',
+    transition: `all var(--lx-transition-fast) var(--lx-ease)`,
     border: '1px solid var(--lx-border-soft)',
-    background: 'var(--lx-surface-glass, var(--lx-surface))', backdropFilter: 'blur(16px) saturate(160%)', WebkitBackdropFilter: 'blur(16px) saturate(160%)',
+    background: 'var(--lx-surface-glass, var(--lx-surface))',
+    backdropFilter: 'blur(var(--lx-glass-blur)) saturate(var(--lx-glass-saturate))',
+    WebkitBackdropFilter: 'blur(var(--lx-glass-blur)) saturate(var(--lx-glass-saturate))',
     color: 'var(--lx-text)',
   }
   if (state === 'selected') {
@@ -367,37 +369,30 @@ export default function ServerWizard({ serverId, catalog, onSaved, onCancel }: {
         </h1>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem' }}>
+      {/* Shared `.lx-stepper` component (Theming v2 T0b) — the exact same
+          classes the NiceGUI configurator's step bar uses, so the two GUIs
+          stop drifting on step-indicator styling. */}
+      <div className="lx-stepper" style={{ marginBottom: '1.5rem' }}>
         {stepLabels.map((lbl, i) => {
           const active = i === step
           const done = i < step
-          const accent = active ? 'var(--lx-accent)' : done ? 'var(--lx-state-up)' : 'var(--lx-text-muted)'
+          const labelColor = active ? 'var(--lx-accent)' : done ? 'var(--lx-state-success)' : 'var(--lx-text-muted)'
+          const stepCls = `lx-stepper__step${active ? ' lx-stepper__step--active' : done ? ' lx-stepper__step--done' : ''}`
           return (
             <React.Fragment key={lbl}>
               <div
                 onClick={() => setStep(i)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-                  fontSize: '0.8rem', fontWeight: 600, color: accent,
+                  fontSize: '0.8rem', fontWeight: 600, color: labelColor,
                 }}
               >
-                <span style={{
-                  width: 26, height: 26, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: '0.78rem', fontWeight: 700,
-                  color: active ? 'var(--lx-bg)' : done ? 'var(--lx-state-up)' : 'var(--lx-text-muted)',
-                  background: active
-                    ? 'var(--lx-accent)'
-                    : done ? 'color-mix(in srgb, var(--lx-state-up) 16%, transparent)' : 'var(--lx-elevated)',
-                  border: `1px solid ${active ? 'var(--lx-accent)' : done ? 'color-mix(in srgb, var(--lx-state-up) 40%, transparent)' : 'var(--lx-border-soft)'}`,
-                  transition: 'all 0.15s',
-                }}>
+                <span className={stepCls}>
                   {done ? <span className="material-icons" style={{ fontSize: 16 }}>check</span> : i + 1}
                 </span>
                 <span style={{ display: window.innerWidth < 560 ? 'none' : 'inline' }}>{lbl}</span>
               </div>
-              {i < stepLabels.length - 1 && (
-                <div style={{ flex: 1, height: 2, borderRadius: 2, background: done ? 'color-mix(in srgb, var(--lx-state-up) 40%, transparent)' : 'var(--lx-border-soft)' }} />
-              )}
+              {i < stepLabels.length - 1 && <div className="lx-stepper__bar" />}
             </React.Fragment>
           )
         })}
@@ -1051,7 +1046,7 @@ function Step3({ catalog, form, issues, isPhysical }: {
               const szStr = d.size_gb >= 1024 ? `${(d.size_gb / 1024).toFixed(1)} TB` : `${d.size_gb} GB`
               return (
                 <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', paddingLeft: '0.5rem' }}>
-                  <span style={{ fontSize: '0.72rem', fontFamily: 'monospace', color: 'var(--lx-text-muted)', width: 140, flexShrink: 0 }}>{d.mount || '—'}</span>
+                  <span style={{ fontSize: '0.72rem', fontFamily: 'var(--lx-font-mono)', color: 'var(--lx-text-muted)', width: 140, flexShrink: 0 }}>{d.mount || '—'}</span>
                   <span style={{ fontSize: '0.72rem', color: 'var(--lx-text-muted)' }}>{d.size_gb ? szStr : '?'} [{item?.label ?? d.disk_id}]</span>
                 </div>
               )

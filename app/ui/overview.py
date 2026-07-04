@@ -13,6 +13,20 @@ _TYPE_ICON = {
     "container": "view_in_ar",
 }
 
+# Catalog "color" fields are free-text Tailwind colour names (see catalog/*.yml).
+# Map them to the nearest --lx-state-* token so status/lifecycle badges render
+# via the theme engine instead of a hardcoded hue (Theming v2 T1 plugin sweep).
+_STATE_BY_COLOR = {
+    "emerald": "up", "green": "up", "teal": "up", "lime": "up", "cyan": "up",
+    "red": "down", "rose": "down", "pink": "down",
+    "amber": "paused", "orange": "paused", "yellow": "paused",
+}
+
+
+def _state_for_color(color: str) -> str:
+    """Nearest --lx-state-* bucket for a catalog Tailwind colour name."""
+    return _STATE_BY_COLOR.get((color or "").lower(), "unknown")
+
 
 def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
     """Render the full server list with search/filter.
@@ -80,7 +94,7 @@ def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
                   on_click=lambda: open_configurator_fn(None)) \
             .props("color=primary")
 
-    ui.separator().classes("my-3 border-slate-200 dark:border-white/5")
+    ui.separator().classes("my-3 border-[var(--lx-border-soft)]")
 
     # ── Server cards list ─────────────────────────────────────────────────────
     list_area = ui.column().classes("w-full gap-3")
@@ -145,7 +159,7 @@ def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
         except Exception as exc:
             with list_area:
                 with ui.column().classes("w-full items-center py-12 gap-2"):
-                    ui.icon("error", size="48px").classes("text-red-400")
+                    ui.icon("error", size="48px").classes("text-[var(--lx-state-down)]")
                     ui.label("Failed to load servers").classes(UIStyles.TITLE_H3)
                     ui.label(str(exc)).classes(UIStyles.STATUS_TEXT_ERROR + " font-mono")
             return
@@ -181,7 +195,7 @@ def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
 
                 with ui.card().classes(
                     UIStyles.CARD_BASE + " w-full p-0 overflow-hidden "
-                    "hover:border-slate-300 dark:hover:border-white/10 transition-colors"
+                    "hover:border-[var(--lx-border)] transition-colors"
                 ):
                     # Accent strip (env colour)
                     ui.element("div").classes(f"h-0.5 w-full bg-{env_color}-500")
@@ -208,23 +222,21 @@ def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
                             UIStyles.BADGE_NEUTRAL + f" shrink-0 !text-{env_color}-300"
                         )
 
-                        # Status badge
+                        # Status badge — catalog colour resolved to the nearest
+                        # theme state token so it responds to the active theme.
                         status_display = status_labels.get(status, status.capitalize())
-                        status_color = status_colors.get(status, "grey")
+                        status_state = _state_for_color(status_colors.get(status, ""))
                         ui.label(status_display).classes(
-                            f"text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 "
-                            f"rounded-full shrink-0 "
-                            f"bg-{status_color}-500/15 text-{status_color}-300 "
-                            f"border border-{status_color}-500/30"
+                            getattr(UIStyles, f"BADGE_STATE_{status_state.upper()}") + " shrink-0"
                         )
 
                         sid = server["id"]
                         ui.button(icon="edit", on_click=lambda _, s=server: open_configurator_fn(s)) \
-                            .props("flat round dense size=sm color=blue-grey")
+                            .props("flat round dense size=sm color=primary")
                         ui.button(
                             icon="delete",
                             on_click=lambda _, sid=sid, name=server["name"]: _confirm_delete(sid, name, refresh),
-                        ).props("flat round dense size=sm color=red-4")
+                        ).props("flat round dense size=sm color=negative")
 
     def _confirm_delete(server_id: int, name: str, after_fn) -> None:
         with ui.dialog() as dlg, ui.card().classes(UIStyles.MODAL_CONTAINER + " p-6 gap-4"):

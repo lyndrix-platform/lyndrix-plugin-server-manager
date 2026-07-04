@@ -63,16 +63,19 @@ def open_configurator(existing_server: dict | None, on_saved_fn) -> None:  # noq
         # ── Header (compact) ──────────────────────────────────────────────
         with ui.row().classes(
             "w-full items-center justify-between px-4 py-1.5 shrink-0 "
-            "border-b border-slate-200 dark:border-white/5"
+            "border-b border-[var(--lx-border-soft)]"
         ):
             with ui.row().classes("items-center gap-2"):
                 ui.icon("dns", size="16px").classes(UIStyles.ICON_PRIMARY)
                 ui.label(title).classes(UIStyles.LABEL_HEADING)
             ui.button(icon="close", on_click=dlg.close).props("flat round dense size=xs")
 
-        # ── Step bar (compact) ────────────────────────────────────────────
+        # ── Step bar (compact) ──────────────────────────────────────────────
+        # Shared `.lx-stepper` component (Theming v2 T0b) — the exact same
+        # classes ServerWizard.tsx's step bar uses, so the two GUIs stop
+        # drifting on step-indicator styling.
         steps_row = ui.row().classes(
-            "w-full px-4 py-1 gap-0 shrink-0 items-center border-b border-slate-200 dark:border-white/5"
+            f"w-full px-4 py-1.5 shrink-0 border-b border-[var(--lx-border-soft)] {UIStyles.STEPPER}"
         )
 
         def _render_step_bar(active: int) -> None:
@@ -81,15 +84,20 @@ def open_configurator(existing_server: dict | None, on_saved_fn) -> None:  # noq
                 for i, label in enumerate(_STEP_LABELS):
                     done = i < active
                     curr = i == active
-                    col = ("text-primary" if curr
-                           else "text-emerald-400" if done
-                           else "text-slate-400 dark:text-zinc-500")
-                    icon = "check_circle" if done else ("radio_button_checked" if curr else "radio_button_unchecked")
-                    with ui.row().classes("items-center gap-1"):
-                        ui.icon(icon, size="16px").classes(col)
-                        ui.label(label).classes(f"text-xs font-medium {col}")
+                    step_state_cls = (" lx-stepper__step--active" if curr
+                                       else " lx-stepper__step--done" if done else "")
+                    label_cls = ("text-[var(--lx-accent)]" if curr
+                                 else "text-[var(--lx-state-success)]" if done
+                                 else "text-[var(--lx-text-muted)]")
+                    with ui.row().classes("items-center gap-1.5"):
+                        with ui.element("div").classes(f"lx-stepper__step{step_state_cls}"):
+                            if done:
+                                ui.icon("check", size="14px")
+                            else:
+                                ui.label(str(i + 1)).classes("text-[10px] font-bold")
+                        ui.label(label).classes(f"text-xs font-medium {label_cls}")
                     if i < len(_STEP_LABELS) - 1:
-                        ui.element("div").classes("flex-1 h-px bg-slate-200 dark:bg-white/10 mx-2")
+                        ui.element("div").classes("lx-stepper__bar")
 
         _render_step_bar(0)
 
@@ -146,7 +154,7 @@ def open_configurator(existing_server: dict | None, on_saved_fn) -> None:  # noq
                         ui.label("Select an environment.") \
                             .classes(UIStyles.TEXT_HINT + " italic")
 
-                ui.element("div").classes("w-full h-px bg-slate-200 dark:bg-white/10 shrink-0")
+                ui.element("div").classes("w-full h-px bg-[var(--lx-border-soft)] shrink-0")
 
                 with ui.column().classes(
                     "px-3 pt-3 pb-2 gap-1 md:grow md:basis-0 md:min-h-0 md:overflow-y-auto"
@@ -159,7 +167,7 @@ def open_configurator(existing_server: dict | None, on_saved_fn) -> None:  # noq
             # Thin re-open handle docked to the right edge while collapsed (desktop).
             reopen_handle = ui.element("div").classes(
                 "flex-col items-center shrink-0 px-1 py-2 cursor-pointer "
-                "border-l border-slate-200 dark:border-white/5 hover:bg-slate-100 dark:hover:bg-white/5"
+                "border-l border-[var(--lx-border-soft)] hover:bg-[var(--lx-elevated)]"
             ).style("display:none").tooltip("Show Profile & Rules")
             with reopen_handle:
                 ui.icon("chevron_left", size="18px").classes(UIStyles.ICON_MUTED)
@@ -211,9 +219,12 @@ def open_configurator(existing_server: dict | None, on_saved_fn) -> None:  # noq
                     avail = feat.get("available", True)
                     icon = "check_circle" if avail else "cancel"
                     col = UIStyles.ICON_SUCCESS if avail else UIStyles.STATUS_TEXT_ERROR
-                    bg = "bg-emerald-500/10" if avail else "bg-red-500/10"
+                    bg = (
+                        "bg-[color-mix(in_srgb,var(--lx-state-up)_10%,transparent)]" if avail
+                        else "bg-[color-mix(in_srgb,var(--lx-state-down)_10%,transparent)]"
+                    )
                     with ui.element("div").classes(
-                        f"flex items-center gap-1.5 px-2 py-1 rounded-lg {bg} cursor-default"
+                        f"flex items-center gap-1.5 px-2 py-1 rounded-[var(--lx-radius-lg)] {bg} cursor-default"
                     ).tooltip(feat.get("description", "")):
                         ui.icon(feat.get("icon", icon), size="13px").classes(col)
                         ui.label(feat.get("label", feat["id"])).classes(f"text-[11px] {col}")
@@ -230,7 +241,7 @@ def open_configurator(existing_server: dict | None, on_saved_fn) -> None:  # noq
         # ── Navigation bar (compact) ──────────────────────────────────────
         nav_row = ui.row().classes(
             "w-full justify-between items-center px-4 py-2 shrink-0 "
-            "border-t border-slate-200 dark:border-white/5"
+            "border-t border-[var(--lx-border-soft)]"
         )
 
         nonlocal_refs: dict = {}
