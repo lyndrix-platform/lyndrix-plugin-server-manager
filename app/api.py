@@ -27,6 +27,14 @@ from core.api import ApiIdentity, require_permission
 from .controller.service import ServerManagerService
 from .model.catalog import _DEFAULT_CATALOG_DIR
 
+# Plugin-scoped permission ids. Gating routes on the fully-qualified
+# plugin:<id>:api:* (rather than bare api:read/api:write) makes the manifest's
+# scoped viewer/operator roles actually unlock routes, while global api:read/
+# api:write holders keep working via the core's one-directional fallback.
+PLUGIN_ID = "lyndrix.plugin.server_manager"
+PERM_READ = f"plugin:{PLUGIN_ID}:api:read"
+PERM_WRITE = f"plugin:{PLUGIN_ID}:api:write"
+
 # Catalog re-homing is restricted to directories inside the plugin install root
 # (where the shipped catalog/ and examples/ dirs live). This blocks both
 # arbitrary host file reads and path traversal that could feed attacker
@@ -280,14 +288,14 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
 
     # ── Servers (CRUD) ─────────────────────────────────────────────────────────
     @router.get("/servers")
-    async def list_servers(identity: ApiIdentity = Depends(require_permission("api:read"))):
+    async def list_servers(identity: ApiIdentity = Depends(require_permission(PERM_READ))):
         _ensure_ready()
         return {"servers": await asyncio.to_thread(service.get_all_servers)}
 
     @router.get("/servers/{server_id}")
     async def get_server(
         server_id: int,
-        identity: ApiIdentity = Depends(require_permission("api:read")),
+        identity: ApiIdentity = Depends(require_permission(PERM_READ)),
     ):
         _ensure_ready()
         server = await asyncio.to_thread(service.get_server, server_id)
@@ -298,7 +306,7 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
     @router.post("/servers")
     async def create_server(
         payload: ServerCreatePayload,
-        identity: ApiIdentity = Depends(require_permission("api:write")),
+        identity: ApiIdentity = Depends(require_permission(PERM_WRITE)),
     ):
         _ensure_ready()
         try:
@@ -313,7 +321,7 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
     async def update_server(
         server_id: int,
         payload: ServerUpdatePayload,
-        identity: ApiIdentity = Depends(require_permission("api:write")),
+        identity: ApiIdentity = Depends(require_permission(PERM_WRITE)),
     ):
         _ensure_ready()
         data = payload.model_dump(exclude_unset=True)
@@ -325,7 +333,7 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
     @router.delete("/servers/{server_id}")
     async def delete_server(
         server_id: int,
-        identity: ApiIdentity = Depends(require_permission("api:write")),
+        identity: ApiIdentity = Depends(require_permission(PERM_WRITE)),
     ):
         _ensure_ready()
         if not await asyncio.to_thread(service.delete_server, server_id):
@@ -334,11 +342,11 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
 
     # ── Statuses / Stats ───────────────────────────────────────────────────────
     @router.get("/statuses")
-    async def list_statuses(identity: ApiIdentity = Depends(require_permission("api:read"))):
+    async def list_statuses(identity: ApiIdentity = Depends(require_permission(PERM_READ))):
         return {"statuses": await asyncio.to_thread(service.get_all_statuses)}
 
     @router.get("/stats")
-    async def stats(identity: ApiIdentity = Depends(require_permission("api:read"))):
+    async def stats(identity: ApiIdentity = Depends(require_permission(PERM_READ))):
         _ensure_ready()
         return await asyncio.to_thread(service.get_stats)
 
@@ -346,7 +354,7 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
     @router.post("/validate")
     async def validate(
         payload: ValidatePayload,
-        identity: ApiIdentity = Depends(require_permission("api:read")),
+        identity: ApiIdentity = Depends(require_permission(PERM_READ)),
     ):
         issues = await asyncio.to_thread(
             service.validate_server,
@@ -363,7 +371,7 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
     @router.post("/catalog/evaluate-combo")
     async def evaluate_combo(
         payload: EvaluateComboPayload,
-        identity: ApiIdentity = Depends(require_permission("api:read")),
+        identity: ApiIdentity = Depends(require_permission(PERM_READ)),
     ):
         """Wrap ProductCatalog.evaluate_combo — the VM vCPU/RAM matrix verdict.
 
@@ -383,11 +391,11 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
 
     # ── Catalog ────────────────────────────────────────────────────────────────
     @router.get("/catalog")
-    async def get_catalog(identity: ApiIdentity = Depends(require_permission("api:read"))):
+    async def get_catalog(identity: ApiIdentity = Depends(require_permission(PERM_READ))):
         return await asyncio.to_thread(_catalog_payload, service)
 
     @router.post("/catalog/reload")
-    async def reload_catalog(identity: ApiIdentity = Depends(require_permission("api:write"))):
+    async def reload_catalog(identity: ApiIdentity = Depends(require_permission(PERM_WRITE))):
         def _run() -> dict:
             service.reload_catalog()
             return _catalog_payload(service)
@@ -397,7 +405,7 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
     @router.post("/catalog/path")
     async def set_catalog_path(
         payload: CatalogPathPayload,
-        identity: ApiIdentity = Depends(require_permission("api:write")),
+        identity: ApiIdentity = Depends(require_permission(PERM_WRITE)),
     ):
         # TODO(agent): catalog re-homing is an operator-level action but is gated
         # by the same api:write permission as ordinary CRUD; promote to a

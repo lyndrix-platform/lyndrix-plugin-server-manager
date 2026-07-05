@@ -67,13 +67,15 @@ _DEFAULT_CATALOG_DIR = Path(__file__).parent.parent.parent / "catalog"
 # malicious expression can at worst raise, never execute code.
 
 _SAFE_BIN_OPS: dict[type, Callable[[Any, Any], Any]] = {
+    # No ast.Pow: `**` on operator-controlled catalog values (e.g. 2**10**9)
+    # is an easy CPU-exhaustion DoS, so it is rejected like any other
+    # disallowed operator instead of being allow-listed here.
     ast.Add: operator.add,
     ast.Sub: operator.sub,
     ast.Mult: operator.mul,
     ast.Div: operator.truediv,
     ast.FloorDiv: operator.floordiv,
     ast.Mod: operator.mod,
-    ast.Pow: operator.pow,
 }
 _SAFE_CMP_OPS: dict[type, Callable[[Any, Any], Any]] = {
     ast.Eq: operator.eq,

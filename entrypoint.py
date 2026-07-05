@@ -97,6 +97,25 @@ manifest = ModuleManifest(
             "server_manager:status_changed",
         ],
     },
+    # Identity & Permissions 2.0: roles use fully-qualified per-plugin
+    # permissions (plugin:<id>:api:*) rather than the bare api:read/write,
+    # so granting a role here can never leak into a global cross-plugin grant.
+    roles=[
+        {"id": "admin", "label": "Server Manager Administrator",
+         "permissions": ["plugin:lyndrix.plugin.server_manager:api:read",
+                          "plugin:lyndrix.plugin.server_manager:api:write"],
+         "auto_map_groups": ["INT_ADMIN"],
+         "description": "Full control over server inventory and catalog configuration."},
+        {"id": "operator", "label": "Server Manager Operator",
+         "permissions": ["plugin:lyndrix.plugin.server_manager:api:read",
+                          "plugin:lyndrix.plugin.server_manager:api:write"],
+         "auto_map_groups": [],
+         "description": "Manage servers, no administrative extras."},
+        {"id": "viewer", "label": "Server Manager Viewer",
+         "permissions": ["plugin:lyndrix.plugin.server_manager:api:read"],
+         "auto_map_groups": [],
+         "description": "Read-only access to the server inventory."},
+    ],
 )
 
 # ── Public plugin API (called by lyndrix-core) ────────────────────────────────
