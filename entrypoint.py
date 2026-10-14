@@ -24,6 +24,24 @@ Events emitted (subscribe from any other plugin)
                                      old_profile, new_profile,
                                      environment_id, server_type}
   server_manager:status_changed   — {server_id, server_name, old_status, new_status}
+  server_manager:ingest_failed    — {topic, source, external_id, error}
+  server_manager:writeback_requested — {action: update|delete, source, external_id,
+                                        server, changes}; only for servers whose
+                                        source pushed writeback=True
+
+Events consumed (push servers in from any other plugin)
+-------------------------------------------------------
+  server_manager:register_server   — {source, external_id, name, environment_id,
+                                      server_type, ...any server field}
+                                     idempotent upsert keyed by (source, external_id)
+  server_manager:deregister_server — {source, external_id}
+  server_manager:writeback_failed  — {source, external_id, error}; the source
+                                     could not persist a writeback_requested edit
+  Pushes carry writeback: bool — False (default) makes the server read-only
+  here, True lets users edit it and routes the edit back to the source.
+  The emitting plugin must list these topics in its own permissions.emit.
+  REST equivalent: PUT/DELETE /servers/external/{source}/{external_id},
+  POST /servers/import (batch).
 """
 import asyncio
 import time
@@ -44,7 +62,7 @@ except ImportError:
             return fn
         return _d
 
-from .app.api import build_plugin_router
+from .app.api import ExternalServerPayload, build_plugin_router
 from .app.controller.service import server_manager_service as svc
 from .app.ui.settings import render_settings_ui as _render_settings_ui
 from .app.ui.widget import render_dashboard_widget as _render_widget
@@ -55,7 +73,7 @@ from .app.ui.page import render_server_manager_page
 manifest = ModuleManifest(
     id="lyndrix.plugin.server_manager",
     name="Server Manager",
-    version="1.1.0",
+    version="1.2.0",
     description=(
         "Central server inventory with configurable hardware catalogs, "
         "combination rules, and event-bus hooks for downstream order workflows."
@@ -88,13 +106,20 @@ manifest = ModuleManifest(
     ],
     settings_ui_route="/server-manager/settings",
     permissions={
-        "subscribe": ["db:connected"],
+        "subscribe": [
+            "db:connected",
+            "server_manager:register_server",
+            "server_manager:deregister_server",
+            "server_manager:writeback_failed",
+        ],
         "emit": [
             "server_manager:server_created",
             "server_manager:server_updated",
             "server_manager:server_deleted",
             "server_manager:hardware_changed",
             "server_manager:status_changed",
+            "server_manager:ingest_failed",
+            "server_manager:writeback_requested",
         ],
     },
     # Identity & Permissions 2.0: roles use fully-qualified per-plugin
@@ -210,6 +235,67 @@ def setup(ctx):
             ctx.log.info("Server Manager: database ready")
         except Exception as exc:
             ctx.log.error(f"Server Manager: DB init failed — {exc}")
+
+    # Inbound servers from other plugins. Payloads are untrusted input; any
+    # failure is reported back on server_manager:ingest_failed because the
+    # bus gives the sender no return value.
+    def _ingest_failed(topic: str, payload, error: str) -> None:
+        data = payload if isinstance(payload, dict) else {}
+        ctx.log.warning(f"Server Manager: {topic} rejected — {error}")
+        ctx.emit("server_manager:ingest_failed", {
+            "topic": topic,
+            "source": data.get("source"),
+            "external_id": data.get("external_id"),
+            "error": error,
+        })
+
+    @ctx.subscribe("server_manager:register_server")
+    async def _on_register_server(payload):
+        topic = "server_manager:register_server"
+        if not isinstance(payload, dict):
+            _ingest_failed(topic, payload, "payload must be an object")
+            return
+        if not svc.is_ready:
+            _ingest_failed(topic, payload, "database not ready")
+            return
+        try:
+            data = ExternalServerPayload.model_validate(payload).model_dump(exclude_unset=True)
+            await asyncio.to_thread(svc.upsert_external_server, data)
+        except Exception as exc:
+            _ingest_failed(topic, payload, str(exc))
+
+    @ctx.subscribe("server_manager:deregister_server")
+    async def _on_deregister_server(payload):
+        topic = "server_manager:deregister_server"
+        data = payload if isinstance(payload, dict) else {}
+        source, external_id = data.get("source"), data.get("external_id")
+        if not source or not external_id:
+            _ingest_failed(topic, payload, "source and external_id are required")
+            return
+        if not svc.is_ready:
+            _ingest_failed(topic, payload, "database not ready")
+            return
+        try:
+            if not await asyncio.to_thread(
+                svc.remove_external_server, str(source), str(external_id)
+            ):
+                _ingest_failed(topic, payload, "unknown server")
+        except Exception as exc:
+            _ingest_failed(topic, payload, str(exc))
+
+    @ctx.subscribe("server_manager:writeback_failed")
+    async def _on_writeback_failed(payload):
+        data = payload if isinstance(payload, dict) else {}
+        source, external_id = data.get("source"), data.get("external_id")
+        if not source or not external_id or not svc.is_ready:
+            ctx.log.warning(f"Server Manager: ignoring malformed writeback_failed {data!r}")
+            return
+        try:
+            await asyncio.to_thread(
+                svc.mark_writeback_failed, str(source), str(external_id), str(data.get("error") or "")
+            )
+        except Exception as exc:
+            ctx.log.error(f"Server Manager: could not record write-back failure — {exc}")
 
     @ui.page("/server-manager")
     @main_layout("Server Manager")

@@ -26,7 +26,11 @@
     "colName": "Name",
     "colConnection": "Verbindung",
     "colStatus": "Status",
-    "actions": "Aktionen"
+    "actions": "Aktionen",
+    "readOnly": "Verwaltet von {{source}} — schreibgeschützt",
+    "syncPending": "Warte darauf, dass {{source}} die Änderung übernimmt",
+    "syncFailed": "Rückschreiben fehlgeschlagen",
+    "ciLink": "Configuration Item in der Entity Registry öffnen"
   },
   "settings": {
     "title": "Server Manager — Einstellungen",

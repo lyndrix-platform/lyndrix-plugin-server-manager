@@ -15,7 +15,7 @@ driver, default route `/server-manager`) logs in and screenshots it.
 
 Same harness as `run-lyndrix-core` / `run-iac-orchestrator` — same compose stack,
 same shared venv, same driver. Paths below are relative to this plugin repo root
-(`lyndrix-plugin-server-manager/`); the core repo is its sibling `../lyndrix-core/`.
+(`lyndrix-plugin-server-manager/`); the core repo is its sibling `../../lyndrix-core/`.
 
 ## Prerequisites
 
@@ -24,8 +24,8 @@ The driver runtime (Python venv + Chromium) lives in the **core** repo and is sh
 once if missing:
 
 ```bash
-python3 -m venv ../lyndrix-core/.dev/run-venv
-. ../lyndrix-core/.dev/run-venv/bin/activate
+python3 -m venv ../../lyndrix-core/.dev/run-venv
+. ../../lyndrix-core/.dev/run-venv/bin/activate
 pip install playwright
 python -m playwright install chromium
 sudo $(which python) -m playwright install-deps chromium   # system libs (libnspr4/libnss3/…)
@@ -33,16 +33,16 @@ sudo $(which python) -m playwright install-deps chromium   # system libs (libnsp
 
 ## Bring up the stack (with this plugin mounted)
 
-The plugin is already wired into `../lyndrix-core/docker/docker-compose.dev.yml`:
+The plugin is already wired into `../../lyndrix-core/docker/docker-compose.dev.yml`:
 
 ```
-- ../../lyndrix-plugin-server-manager:/app/plugins/server_manager
+- ../../plugins/lyndrix-plugin-server-manager:/app/plugins/server_manager
 ```
 
 If `docker ps` already shows `lyndrix-core-dev` on `:8081`, skip this:
 
 ```bash
-docker compose -f ../lyndrix-core/docker/docker-compose.dev.yml up -d --build
+docker compose -f ../../lyndrix-core/docker/docker-compose.dev.yml up -d --build
 ```
 
 ## Ensure the plugin is enabled
@@ -58,11 +58,11 @@ curl -s http://localhost:8081/api/health | python3 -m json.tool | grep server_ma
 
 ## Run (agent path) — screenshot the UI
 
-The admin password comes from `../lyndrix-core/docker/.env.dev` (never hardcode it):
+The admin password comes from `../../lyndrix-core/docker/.env.dev` (never hardcode it):
 
 ```bash
-export LYNDRIX_ADMIN_PASSWORD=$(grep -E '^LYNDRIX_ADMIN_PASSWORD=' ../lyndrix-core/docker/.env.dev | cut -d= -f2-)
-../lyndrix-core/.dev/run-venv/bin/python .claude/skills/run-server-manager/driver.py --no-mobile --outdir /tmp/sm-shots
+export LYNDRIX_ADMIN_PASSWORD=$(grep -E '^LYNDRIX_ADMIN_PASSWORD=' ../../lyndrix-core/docker/.env.dev | cut -d= -f2-)
+../../lyndrix-core/.dev/run-venv/bin/python .claude/skills/run-server-manager/driver.py --no-mobile --outdir /tmp/sm-shots
 ```
 
 Output (verified):
@@ -91,7 +91,7 @@ server on `:5173`), in addition to the NiceGUI page above. Drive it with the sib
 bounces to the dashboard):
 
 ```bash
-UI=../lyndrix-ui/.claude/skills/run-lyndrix-ui/driver.mjs
+UI=../../lyndrix-ui/.claude/skills/run-lyndrix-ui/driver.mjs
 node "$UI" /apps/lyndrix-plugin-server_manager/server-manager          /tmp/sm-react.png
 node "$UI" /apps/lyndrix-plugin-server_manager/server-manager/settings /tmp/sm-react-settings.png
 ```
@@ -107,13 +107,13 @@ Produkte counts) with a back arrow.
   renders inside core at `/server-manager`. A direct `curl /server-manager` returns the
   empty NiceGUI shell — always use the browser driver.
 - **Password, not hardcoded.** The driver reads `LYNDRIX_ADMIN_PASSWORD` from the env;
-  the dev value lives in `../lyndrix-core/docker/.env.dev`. Without it the driver exits 2.
+  the dev value lives in `../../lyndrix-core/docker/.env.dev`. Without it the driver exits 2.
 - **Plugin must be enabled.** `auto_enable_on_install=False` → enable it in the Plugin
   Manager (or it won't be in `/api/health` and `/server-manager` 302-redirects to `/login`).
 - **NiceGUI WS auth timing.** Auth is hydrated over the websocket after navigation; the
   driver sleeps ~2 s post-login and retries once if a page bounces to `/login`. A
   screenshot that shows the login page = the retry still lost the race; just re-run.
-- **Shared venv lives in core.** `../lyndrix-core/.dev/run-venv` — this plugin repo has
+- **Shared venv lives in core.** `../../lyndrix-core/.dev/run-venv` — this plugin repo has
   no venv of its own. `chromium-cli` is intentionally not used (absent on this host).
 - **React-route safeId keeps underscores.** The shell builds plugin routes as
   `plugin.id.replace(/\./g,'-')`, so `lyndrix.plugin.server_manager` →

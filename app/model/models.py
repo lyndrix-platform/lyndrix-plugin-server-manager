@@ -1,7 +1,7 @@
 """SQLAlchemy model for the Server Manager plugin."""
 from __future__ import annotations
 
-from sqlalchemy import Column, DateTime, Integer, JSON, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase
 
 
@@ -11,6 +11,12 @@ class _Base(DeclarativeBase):
 
 class ServerRecord(_Base):
     __tablename__ = "server_manager_servers"
+    # (source, external_id) is the idempotency key for servers pushed in by
+    # other systems (REST ingest / event bus). Manual records keep both NULL,
+    # and NULLs never collide in a unique index.
+    __table_args__ = (
+        UniqueConstraint("source", "external_id", name="uq_server_manager_source_ext"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(255), nullable=False)
@@ -27,6 +33,27 @@ class ServerRecord(_Base):
     hardware_profile = Column(JSON, nullable=False, default=dict)
     tags = Column(JSON, nullable=False, default=list)
     notes = Column(Text, nullable=True)
+    # Origin of the record: NULL = created by hand in the UI, otherwise the
+    # id of the pushing system (e.g. "iac-orchestrator"). external_id is that
+    # system's own stable key for the server.
+    source = Column(String(64), nullable=True)
+    external_id = Column(String(255), nullable=True)
+    # Entity Registry UUID of the configuration item this server represents
+    # (shared with monitoring, ITSM, ...). Set by the pushing source or by hand.
+    ci_id = Column(String(36), nullable=True, index=True)
+    # Declared by the source on push. False = the source can't persist edits,
+    # so the record is read-only here. True = the source accepts edits via
+    # server_manager:writeback_requested (e.g. commits them to its repo).
+    writeback = Column(Boolean, nullable=False, default=False)
+    # Write-back progress of the last local edit: NULL = in sync with the
+    # source, "pending" = sent and awaiting the source's next push,
+    # "failed" = the source reported an error (see sync_error).
+    sync_state = Column(String(16), nullable=True)
+    sync_error = Column(Text, nullable=True)
+
+    @property
+    def read_only(self) -> bool:
+        return self.source is not None and not self.writeback
     ordered_by = Column(String(255), nullable=True)
     ordered_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=func.now())
@@ -48,6 +75,13 @@ class ServerRecord(_Base):
             "hardware_profile": self.hardware_profile or {},
             "tags": self.tags or [],
             "notes": self.notes,
+            "source": self.source,
+            "external_id": self.external_id,
+            "ci_id": self.ci_id,
+            "writeback": bool(self.writeback),
+            "read_only": self.read_only,
+            "sync_state": self.sync_state,
+            "sync_error": self.sync_error,
             "ordered_by": self.ordered_by,
             "ordered_at": self.ordered_at.isoformat() if self.ordered_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,

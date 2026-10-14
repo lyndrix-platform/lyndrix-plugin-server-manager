@@ -230,13 +230,26 @@ def render_overview_ui(ctx, open_configurator_fn):  # noqa: C901
                             getattr(UIStyles, f"BADGE_STATE_{status_state.upper()}") + " shrink-0"
                         )
 
+                        # Write-back progress for servers owned by a source system.
+                        sync_state = server.get("sync_state")
+                        if sync_state == "pending":
+                            ui.icon("sync", size="18px").classes(UIStyles.ICON_MUTED) \
+                                .tooltip(f"Waiting for '{server.get('source')}' to persist the change")
+                        elif sync_state == "failed":
+                            ui.icon("sync_problem", size="18px").classes("text-[var(--lx-state-down)]") \
+                                .tooltip(server.get("sync_error") or "Write-back failed")
+
                         sid = server["id"]
-                        ui.button(icon="edit", on_click=lambda _, s=server: open_configurator_fn(s)) \
-                            .props("flat round dense size=sm color=primary")
-                        ui.button(
-                            icon="delete",
-                            on_click=lambda _, sid=sid, name=server["name"]: _confirm_delete(sid, name, refresh),
-                        ).props("flat round dense size=sm color=negative")
+                        if server.get("read_only"):
+                            ui.icon("lock", size="18px").classes(UIStyles.ICON_MUTED) \
+                                .tooltip(f"Managed by '{server.get('source')}' — read-only")
+                        else:
+                            ui.button(icon="edit", on_click=lambda _, s=server: open_configurator_fn(s)) \
+                                .props("flat round dense size=sm color=primary")
+                            ui.button(
+                                icon="delete",
+                                on_click=lambda _, sid=sid, name=server["name"]: _confirm_delete(sid, name, refresh),
+                            ).props("flat round dense size=sm color=negative")
 
     def _confirm_delete(server_id: int, name: str, after_fn) -> None:
         with ui.dialog() as dlg, ui.card().classes(UIStyles.MODAL_CONTAINER + " p-6 gap-4"):

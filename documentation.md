@@ -47,6 +47,30 @@ Alle Routen sind unter `/api/plugins/lyndrix.plugin.server_manager/` erreichbar 
 | `PUT` | `/servers/{id}` | Server aktualisieren |
 | `DELETE` | `/servers/{id}` | Server entfernen |
 | `GET` | `/catalog` | Verfügbarer Hardware-Katalog + Kombinationsregeln |
+| `PUT` | `/servers/external/{source}/{external_id}` | Server aus einem Fremdsystem anlegen oder aktualisieren (Upsert) |
+| `DELETE` | `/servers/external/{source}/{external_id}` | Von einem Fremdsystem gelieferten Server entfernen |
+| `POST` | `/servers/import` | Batch-Upsert `{servers: [...]}`, Ergebnis pro Eintrag |
+
+### Server aus Fremdsystemen (Ingest)
+
+Andere Systeme (IaC-Orchestrator, CMDB, Skripte) können Server per API oder Event-Bus einspielen. Schlüssel ist das Paar **`source` + `external_id`** (z. B. `iac-orchestrator` / `docker-atlas`):
+
+- **Idempotent:** Wiederholtes Senden desselben Servers erzeugt keine Duplikate — ein Sync-Job kann sein komplettes Inventar bei jedem Lauf erneut schicken.
+- **Anlegen** verlangt `name`, `environment_id` und `server_type`; bei späteren Pushes werden nur die mitgeschickten Felder übernommen (PATCH-Semantik).
+- **Manuell angelegte Server** (`source` leer) werden nie getroffen und können von einem Fremdsystem nicht überschrieben werden.
+- `source` und `external_id` sind nach dem Anlegen unveränderlich.
+- Es werden die normalen Events (`server_created`, `server_updated`, …) emittiert.
+- **Schreibschutz vs. Rückschreiben (`writeback`):** Das liefernde System entscheidet pro Server, ob es Änderungen selbst persistieren kann.
+  - `writeback: false` (Standard): Der Server ist in beiden UIs und über die normale API **schreibgeschützt** (🔒, `PATCH`/`DELETE` → `409`). Nur die Quelle selbst ändert ihn über den Ingest-Pfad.
+  - `writeback: true`: Der Server ist editierbar. Eine Änderung wird lokal sofort übernommen, als `sync_state = pending` markiert und als `server_manager:writeback_requested` an die Quelle gemeldet (z. B. Commit ins IaC-Repository durch das IaC-Plugin). Der nächste Push der Quelle setzt den Server wieder auf „synchron“; meldet die Quelle `server_manager:writeback_failed`, zeigt die UI den Fehler an.
+  - Die Quelle bleibt die Wahrheit: Was sie nicht übernimmt, überschreibt ihr nächster Push.
+- Es gibt kein automatisches Aufräumen: Server, die ein Fremdsystem nicht mehr liefert, müssen explizit per `DELETE` bzw. `deregister_server` entfernt werden.
+
+```bash
+curl -X PUT -H "Authorization: Bearer <api-key>" -H "Content-Type: application/json" \
+  https://<lyndrix>/api/plugins/lyndrix.plugin.server_manager/servers/external/iac-orchestrator/docker-atlas \
+  -d '{"name": "docker-atlas", "environment_id": "onprem:prod", "server_type": "container", "status": "active"}'
+```
 
 ---
 
@@ -62,7 +86,28 @@ Alle Routen sind unter `/api/plugins/lyndrix.plugin.server_manager/` erreichbar 
 | `server_manager:hardware_changed` | `{server_id, server_name, action, old_profile, new_profile, environment_id, server_type}` | Hardware-Profil geändert |
 | `server_manager:status_changed` | `{server_id, server_name, old_status, new_status}` | Status hat sich geändert |
 
-Das Plugin abonniert keine externen Events.
+| `server_manager:ingest_failed` | `{topic, source, external_id, error}` | Ein per Event-Bus eingespielter Server wurde abgewiesen |
+| `server_manager:writeback_requested` | `{action: update\|delete, source, external_id, server, changes}` | Ein Benutzer hat einen Server mit `writeback: true` geändert — die Quelle soll persistieren |
+
+### Abonnierte Events (Ingest)
+
+| Topic | Payload | Beschreibung |
+|---|---|---|
+| `server_manager:register_server` | `{source, external_id, name, environment_id, server_type, …}` | Server anlegen oder aktualisieren (gleiche Regeln wie der REST-Upsert) |
+| `server_manager:deregister_server` | `{source, external_id}` | Server entfernen |
+| `server_manager:writeback_failed` | `{source, external_id, error}` | Die Quelle konnte eine angeforderte Änderung nicht persistieren |
+
+Das sendende Plugin muss das Topic in seinem eigenen `permissions.emit` deklarieren. Da der Event-Bus keine Antwort liefert, werden Fehler über `server_manager:ingest_failed` zurückgemeldet.
+
+```python
+ctx.emit("server_manager:register_server", {
+    "source": "iac-orchestrator",
+    "external_id": "docker-atlas",
+    "name": "docker-atlas",
+    "environment_id": "onprem:prod",
+    "server_type": "container",
+})
+```
 
 ---
 
@@ -91,6 +136,10 @@ Tabelle: `server_manager_servers`
 | `environment_id` | string | Zugewiesene Umgebung |
 | `server_type` | string | Typ-Klassifikation |
 | `status` | string | Aktueller Status (`active`, `decommissioned`, …) |
+| `source` | string, nullable | Herkunftssystem; leer = manuell angelegt |
+| `external_id` | string, nullable | ID im Herkunftssystem; eindeutig zusammen mit `source` |
+| `writeback` | bool | Quelle kann Änderungen persistieren (sonst schreibgeschützt) |
+| `sync_state` / `sync_error` | string, nullable | Rückschreib-Status: leer = synchron, `pending`, `failed` (+ Fehlertext) |
 | `created_at` | datetime | Anlagezeitpunkt |
 | `updated_at` | datetime | Letzter Änderungszeitpunkt |
 

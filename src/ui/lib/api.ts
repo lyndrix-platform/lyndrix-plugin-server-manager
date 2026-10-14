@@ -22,6 +22,16 @@ export interface ServerRecord {
   ordered_at: string | null
   created_at: string | null
   updated_at: string | null
+  // Set when the server was pushed in by another system (IaC, CMDB, ...).
+  source: string | null
+  external_id: string | null
+  // writeback=false + source → read_only; edits are rejected with 409.
+  writeback: boolean
+  read_only: boolean
+  sync_state: 'pending' | 'failed' | null
+  sync_error: string | null
+  // Entity Registry UUID of the configuration item (deep link into the registry).
+  ci_id: string | null
 }
 
 export interface ServerInput {

@@ -26,7 +26,11 @@
     "colName": "Name",
     "colConnection": "Connection",
     "colStatus": "Status",
-    "actions": "Actions"
+    "actions": "Actions",
+    "readOnly": "Managed by {{source}} — read-only",
+    "syncPending": "Waiting for {{source}} to persist the change",
+    "syncFailed": "Write-back failed",
+    "ciLink": "Open configuration item in the Entity Registry"
   },
   "settings": {
     "title": "Server Manager — Settings",

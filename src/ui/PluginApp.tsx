@@ -102,6 +102,34 @@ function StatusBadge({ status, statuses }: { status: string; statuses: StatusOpt
   )
 }
 
+/** Write-back progress for servers owned by a source system (IaC, ...). */
+function SyncIndicator({ server }: { server: ServerRecord }) {
+  const { t } = useTranslation('server_manager')
+  if (server.sync_state === 'pending') {
+    return (
+      <span
+        className="material-icons"
+        style={{ fontSize: 16, color: 'var(--lx-text-muted)' }}
+        title={t('list.syncPending', { defaultValue: 'Waiting for {{source}} to persist the change', source: server.source })}
+      >
+        sync
+      </span>
+    )
+  }
+  if (server.sync_state === 'failed') {
+    return (
+      <span
+        className="material-icons"
+        style={{ fontSize: 16, color: 'var(--lx-state-down)' }}
+        title={server.sync_error || t('list.syncFailed', { defaultValue: 'Write-back failed' })}
+      >
+        sync_problem
+      </span>
+    )
+  }
+  return null
+}
+
 function useCatalog() {
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   useEffect(() => {
@@ -264,7 +292,11 @@ function ServerListView({
             </thead>
             <tbody>
               {filtered.map((s) => (
-                <tr key={s.id} onClick={() => onEdit(s)} style={{ cursor: 'pointer' }}>
+                <tr
+                  key={s.id}
+                  onClick={s.read_only ? undefined : () => onEdit(s)}
+                  style={{ cursor: s.read_only ? 'default' : 'pointer' }}
+                >
                   <td>
                     <span style={{ fontWeight: 600, color: 'var(--lx-text)' }}>{s.name}</span>
                   </td>
@@ -272,10 +304,38 @@ function ServerListView({
                     <span className="lx-mono" style={{ fontSize: '0.72rem', color: 'var(--lx-text-muted)' }}>
                       {s.hostname || '—'} · {s.environment_id} · {s.server_type}
                     </span>
+                    {s.ci_id && (
+                      <a
+                        href={`/apps/lyndrix-plugin-entity_registry/registry?uuid=${encodeURIComponent(s.ci_id)}`}
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          window.history.pushState({}, '', `/apps/lyndrix-plugin-entity_registry/registry?uuid=${encodeURIComponent(s.ci_id!)}`)
+                          window.dispatchEvent(new PopStateEvent('popstate'))
+                        }}
+                        title={t('list.ciLink', { defaultValue: 'Open configuration item in the Entity Registry' })}
+                        style={{ marginLeft: '0.4rem', verticalAlign: 'middle', color: 'var(--lx-accent)' }}
+                      >
+                        <span className="material-icons" style={{ fontSize: 14 }}>fingerprint</span>
+                      </a>
+                    )}
                   </td>
-                  <td><StatusBadge status={s.status} statuses={statuses} /></td>
+                  <td>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <StatusBadge status={s.status} statuses={statuses} />
+                      <SyncIndicator server={s} />
+                    </span>
+                  </td>
                   <td style={{ textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
-                    {confirmId === s.id ? (
+                    {s.read_only ? (
+                      <span
+                        className="material-icons"
+                        style={{ fontSize: 18, color: 'var(--lx-text-muted)' }}
+                        title={t('list.readOnly', { defaultValue: 'Managed by {{source}} — read-only', source: s.source })}
+                      >
+                        lock
+                      </span>
+                    ) : confirmId === s.id ? (
                       <span style={{ display: 'inline-flex', gap: '0.4rem' }}>
                         <Button label={t('common.delete', { defaultValue: 'Delete' })} variant="danger" onClick={() => void doDelete(s.id)} />
                         <Button label={t('common.cancel', { defaultValue: 'Cancel' })} onClick={() => setConfirmId(null)} />

@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from core.api import ApiIdentity, require_permission
 
-from .controller.service import ServerManagerService
+from .controller.service import ServerManagerService, ServerReadOnlyError
 from .model.catalog import _DEFAULT_CATALOG_DIR
 
 # Plugin-scoped permission ids. Gating routes on the fully-qualified
@@ -71,6 +71,7 @@ class ServerCreatePayload(BaseModel):
     hardware_profile: Dict[str, Any] = Field(default_factory=dict)
     tags: List[str] = Field(default_factory=list)
     notes: Optional[str] = None
+    ci_id: Optional[str] = Field(default=None, min_length=36, max_length=36)
 
 
 class ServerUpdatePayload(BaseModel):
@@ -90,6 +91,34 @@ class ServerUpdatePayload(BaseModel):
     hardware_profile: Optional[Dict[str, Any]] = None
     tags: Optional[List[str]] = None
     notes: Optional[str] = None
+    ci_id: Optional[str] = Field(default=None, min_length=36, max_length=36)
+
+
+class ExternalServerBody(ServerUpdatePayload):
+    """Server fields a source system may push (key comes from elsewhere).
+
+    ``writeback`` tells the Server Manager whether the source can persist
+    edits made here (True → editable, changes go out as
+    server_manager:writeback_requested; False/unset on create → read-only).
+    """
+
+    writeback: Optional[bool] = None
+
+
+class ExternalServerPayload(ExternalServerBody):
+    """A server pushed in by another system (IaC SSoT, CMDB, ...).
+
+    Upsert semantics keyed by (source, external_id): name/environment_id/
+    server_type are required only when the server does not exist yet; on
+    later pushes only the supplied fields are applied.
+    """
+
+    source: str = Field(min_length=1, max_length=64)
+    external_id: str = Field(min_length=1, max_length=255)
+
+
+class ImportPayload(BaseModel):
+    servers: List[ExternalServerPayload] = Field(max_length=1000)
 
 
 class ValidatePayload(BaseModel):
@@ -325,7 +354,10 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
     ):
         _ensure_ready()
         data = payload.model_dump(exclude_unset=True)
-        server = await asyncio.to_thread(service.update_server, server_id, data)
+        try:
+            server = await asyncio.to_thread(service.update_server, server_id, data)
+        except ServerReadOnlyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         if server is None:
             raise HTTPException(status_code=404, detail=f"Unknown server id: {server_id}")
         return {"server": server}
@@ -336,9 +368,73 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
         identity: ApiIdentity = Depends(require_permission(PERM_WRITE)),
     ):
         _ensure_ready()
-        if not await asyncio.to_thread(service.delete_server, server_id):
+        try:
+            deleted = await asyncio.to_thread(service.delete_server, server_id)
+        except ServerReadOnlyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not deleted:
             raise HTTPException(status_code=404, detail=f"Unknown server id: {server_id}")
         return {"ok": True}
+
+    # ── Ingest (external systems) ──────────────────────────────────────────────
+    # Idempotent push API for other systems; keyed by (source, external_id) so
+    # a sync job can re-send its whole inventory every run without duplicates.
+    async def _upsert(data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            server, created = await asyncio.to_thread(service.upsert_external_server, data)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"server": server, "created": created}
+
+    @router.put("/servers/external/{source}/{external_id}")
+    async def upsert_external_server(
+        source: str,
+        external_id: str,
+        payload: ExternalServerBody,  # source/external_id come from the path
+        identity: ApiIdentity = Depends(require_permission(PERM_WRITE)),
+    ):
+        _ensure_ready()
+        data = payload.model_dump(exclude_unset=True)
+        return await _upsert({**data, "source": source, "external_id": external_id})
+
+    @router.delete("/servers/external/{source}/{external_id}")
+    async def delete_external_server(
+        source: str,
+        external_id: str,
+        identity: ApiIdentity = Depends(require_permission(PERM_WRITE)),
+    ):
+        _ensure_ready()
+        if not await asyncio.to_thread(service.remove_external_server, source, external_id):
+            raise HTTPException(
+                status_code=404, detail=f"Unknown external server: {source}/{external_id}"
+            )
+        return {"ok": True}
+
+    @router.post("/servers/import")
+    async def import_servers(
+        payload: ImportPayload,
+        identity: ApiIdentity = Depends(require_permission(PERM_WRITE)),
+    ):
+        """Batch upsert. Each item is applied independently; failures are
+        reported per item instead of aborting the whole import."""
+        _ensure_ready()
+        results: List[Dict[str, Any]] = []
+        for item in payload.servers:
+            data = item.model_dump(exclude_unset=True)
+            key = {"source": item.source, "external_id": item.external_id}
+            try:
+                server, created = await asyncio.to_thread(service.upsert_external_server, data)
+                results.append({**key, "ok": True, "created": created, "id": server["id"]})
+            except (ValueError, LookupError) as exc:
+                results.append({**key, "ok": False, "error": str(exc)})
+        return {
+            "results": results,
+            "created": sum(1 for r in results if r.get("created")),
+            "updated": sum(1 for r in results if r["ok"] and not r.get("created")),
+            "failed": sum(1 for r in results if not r["ok"]),
+        }
 
     # ── Statuses / Stats ───────────────────────────────────────────────────────
     @router.get("/statuses")
