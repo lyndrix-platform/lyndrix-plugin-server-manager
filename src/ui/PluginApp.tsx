@@ -319,6 +319,21 @@ function ServerListView({
                         <span className="material-icons" style={{ fontSize: 14 }}>fingerprint</span>
                       </a>
                     )}
+                    {s.ci_id && (
+                      <a
+                        href={`/apps/lyndrix-plugin-itsm/itsm?new=incident&ci=${encodeURIComponent(s.ci_id)}`}
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          window.history.pushState({}, '', `/apps/lyndrix-plugin-itsm/itsm?new=incident&ci=${encodeURIComponent(s.ci_id!)}`)
+                          window.dispatchEvent(new PopStateEvent('popstate'))
+                        }}
+                        title={t('list.reportIncident', { defaultValue: 'Report an incident for this configuration item' })}
+                        style={{ marginLeft: '0.25rem', verticalAlign: 'middle', color: 'var(--lx-accent)' }}
+                      >
+                        <span className="material-icons" style={{ fontSize: 14 }}>support_agent</span>
+                      </a>
+                    )}
                   </td>
                   <td>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>

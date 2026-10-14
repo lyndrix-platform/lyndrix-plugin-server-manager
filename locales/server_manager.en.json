@@ -30,7 +30,8 @@
     "readOnly": "Managed by {{source}} — read-only",
     "syncPending": "Waiting for {{source}} to persist the change",
     "syncFailed": "Write-back failed",
-    "ciLink": "Open configuration item in the Entity Registry"
+    "ciLink": "Open configuration item in the Entity Registry",
+    "reportIncident": "Report an incident for this configuration item"
   },
   "settings": {
     "title": "Server Manager — Settings",

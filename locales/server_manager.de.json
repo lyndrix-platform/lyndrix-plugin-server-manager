@@ -30,7 +30,8 @@
     "readOnly": "Verwaltet von {{source}} — schreibgeschützt",
     "syncPending": "Warte darauf, dass {{source}} die Änderung übernimmt",
     "syncFailed": "Rückschreiben fehlgeschlagen",
-    "ciLink": "Configuration Item in der Entity Registry öffnen"
+    "ciLink": "Configuration Item in der Entity Registry öffnen",
+    "reportIncident": "Incident für dieses Configuration Item melden"
   },
   "settings": {
     "title": "Server Manager — Einstellungen",
