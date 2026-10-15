@@ -1,6 +1,7 @@
 """Server Manager — plugin settings UI."""
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from nicegui import ui
@@ -8,6 +9,7 @@ from nicegui import ui
 from core.api import UIStyles
 
 from ..controller.service import server_manager_service as svc
+from ..model.catalog import _DEFAULT_CATALOG_DIR
 
 
 def render_settings_ui(ctx):
@@ -21,8 +23,8 @@ def render_settings_ui(ctx):
             ).classes(UIStyles.TEXT_MUTED)
 
             current_dir = str(svc.catalog.catalog_dir)
-            default_dir = str(Path(__file__).parent / "catalog")
-            is_default = current_dir == default_dir
+            default_dir = str(_DEFAULT_CATALOG_DIR.resolve())
+            is_default = str(Path(current_dir).resolve()) == default_dir
 
             catalog_input = ui.input(
                 "Catalog Directory",
@@ -30,21 +32,24 @@ def render_settings_ui(ctx):
                 placeholder=f"default: {default_dir}",
             ).props(f"{UIStyles.INPUT_PROPS} clearable").classes("w-full")
 
-            def _save_catalog_path():
+            async def _save_catalog_path():
+                # Same validation/persistence path as POST /catalog/path: the
+                # directory must live inside the plugin root, is stored in Vault
+                # and announced to every cluster instance.
                 path = (catalog_input.value or "").strip()
-                if path and not Path(path).is_dir():
-                    ui.notify(f"Directory not found: {path}", type="negative")
+                try:
+                    await asyncio.to_thread(svc.apply_catalog_dir, path)
+                except ValueError as exc:
+                    ui.notify(str(exc), type="negative")
                     return
                 if path:
-                    svc.set_catalog_dir(path)
                     ui.notify(f"Catalog path updated: {path}", type="positive")
                 else:
-                    svc.set_catalog_dir(str(Path(__file__).parent / "catalog"))
                     ui.notify("Reset to built-in catalog.", type="info")
                 _refresh_preview()
 
-            def _reload_catalog():
-                svc.reload_catalog()
+            async def _reload_catalog():
+                await asyncio.to_thread(svc.reload_catalog)
                 ui.notify("Catalog reloaded from disk.", type="positive")
                 _refresh_preview()
 

@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-10-15
+### Fixed
+- **Cluster-safe schema bootstrap.** `ensure_tables()` now runs off the event loop
+  (background task from `setup()` / `db:connected`) under
+  `db_instance.advisory_lock("lyndrix_bootstrap")` (getattr-guarded for older
+  cores), uses `ADD COLUMN IF NOT EXISTS` / `CREATE [UNIQUE] INDEX IF NOT EXISTS`
+  on MariaDB (plain DDL on SQLite/MySQL), and treats MariaDB 1050/1060/1061 as
+  "a peer did it". A lost race no longer leaves the plugin un-ready (503 on
+  every route). Bus ingest waits up to 30 s for the bootstrap instead of
+  rejecting early pushes.
+- Short writers (`update`, `delete`, `mark_writeback_failed`) run in READ
+  COMMITTED sessions and retry on MariaDB 1020/1205/1213 (snapshot isolation,
+  lock wait, deadlock); events are emitted once, after the commit.
+- `health()` uses `SELECT COUNT(*)` instead of loading every server row.
+
+### Changed
+- The catalog directory (`POST /catalog/path`, NiceGUI settings) is validated
+  against the plugin install root on every path (the NiceGUI form skipped the
+  check before), persisted in the plugin's Vault store (`catalog_dir`) and
+  re-applied on boot. Path changes and reloads are announced as
+  `server_manager:catalog_changed` with `cluster=True`; peers re-read the stored
+  path and reload. The plugin also re-reads it on `plugin:settings_changed`
+  (core ≥ 1.5.1) for its own id.
+
+### Known limitations
+- `server_manager:writeback_requested` is emitted on the local bus only. In
+  cluster mode a source plugin running on another instance does not receive it;
+  the source's next full push still reconciles. A leased re-emitter for pending
+  rows is a follow-up.
+
 ## [0.1.0] - 2026-06-27
 ### Security
 - Replaced the legacy `eval()`-based combination-rule evaluator with a hardened

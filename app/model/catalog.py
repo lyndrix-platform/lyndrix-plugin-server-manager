@@ -52,6 +52,30 @@ log = get_logger("Plugin:ServerManager:Catalog")
 
 _DEFAULT_CATALOG_DIR = Path(__file__).parent.parent.parent / "catalog"
 
+# Catalog re-homing is restricted to directories inside the plugin install root
+# (where the shipped catalog/ and examples/ dirs live). This blocks both
+# arbitrary host file reads and path traversal that could feed attacker
+# controlled YAML into the rule engine.
+_CATALOG_ALLOWED_ROOT = _DEFAULT_CATALOG_DIR.parent.resolve()
+
+
+def resolve_catalog_dir(raw: str | None) -> Path:
+    """Validate an operator-supplied catalog path against the allowlisted root.
+
+    Empty/None means the built-in catalog. Raises ValueError for a path outside
+    the plugin install root or a directory that does not exist. Shared by the
+    REST API, the NiceGUI settings and the persisted-setting loader.
+    """
+    path = (raw or "").strip()
+    if not path:
+        return _DEFAULT_CATALOG_DIR.resolve()
+    candidate = Path(path).resolve()
+    if candidate != _CATALOG_ALLOWED_ROOT and _CATALOG_ALLOWED_ROOT not in candidate.parents:
+        raise ValueError("Catalog directory must be inside the plugin install root.")
+    if not candidate.is_dir():
+        raise ValueError(f"Directory not found: {path}")
+    return candidate
+
 
 # ── Safe expression evaluator (legacy combination_rules) ───────────────────────
 #

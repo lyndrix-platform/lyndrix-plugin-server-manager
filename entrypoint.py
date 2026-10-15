@@ -27,7 +27,11 @@ Events emitted (subscribe from any other plugin)
   server_manager:ingest_failed    — {topic, source, external_id, error}
   server_manager:writeback_requested — {action: update|delete, source, external_id,
                                         server, changes}; only for servers whose
-                                        source pushed writeback=True
+                                        source pushed writeback=True. Local bus
+                                        only: in cluster mode a source plugin on
+                                        another instance does not see it.
+  server_manager:catalog_changed  — {catalog_dir, action}; cluster-bridged, peers
+                                    re-read the persisted catalog path and reload
 
 Events consumed (push servers in from any other plugin)
 -------------------------------------------------------
@@ -73,7 +77,7 @@ from .app.ui.page import render_server_manager_page
 manifest = ModuleManifest(
     id="lyndrix.plugin.server_manager",
     name="Server Manager",
-    version="1.2.0",
+    version="1.3.0",
     description=(
         "Central server inventory with configurable hardware catalogs, "
         "combination rules, and event-bus hooks for downstream order workflows."
@@ -111,6 +115,10 @@ manifest = ModuleManifest(
             "server_manager:register_server",
             "server_manager:deregister_server",
             "server_manager:writeback_failed",
+            # Cluster: peers announce catalog path changes / reloads.
+            "server_manager:catalog_changed",
+            # Core >= 1.5.1: the operator saved this plugin's settings.
+            "plugin:settings_changed",
         ],
         "emit": [
             "server_manager:server_created",
@@ -120,6 +128,7 @@ manifest = ModuleManifest(
             "server_manager:status_changed",
             "server_manager:ingest_failed",
             "server_manager:writeback_requested",
+            "server_manager:catalog_changed",
         ],
     },
     # Identity & Permissions 2.0: roles use fully-qualified per-plugin
@@ -180,7 +189,7 @@ async def health(ctx) -> PluginHealthStatus:
         )
 
     try:
-        servers = await asyncio.to_thread(svc.get_all_servers)
+        servers = await asyncio.to_thread(svc.count_servers)
     except Exception as exc:  # tables present but the query path is broken
         return PluginHealthStatus(
             status="error",
@@ -193,7 +202,7 @@ async def health(ctx) -> PluginHealthStatus:
     details = {
         "db_connected": True,
         "ready": True,
-        "servers": len(servers),
+        "servers": servers,
         "catalog_loaded": catalog_loaded,
     }
     # DB works but the hardware catalog never loaded → CRUD reads work, but the
@@ -209,6 +218,15 @@ async def health(ctx) -> PluginHealthStatus:
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 
+def _spawn(ctx, coro) -> None:
+    """Start background work via ctx.create_task (older cores: the running loop)."""
+    create_task = getattr(ctx, "create_task", None)
+    if callable(create_task):
+        create_task(coro, name="server_manager:bootstrap")
+    else:
+        asyncio.get_running_loop().create_task(coro)
+
+
 def setup(ctx):
     ctx.log.info("Server Manager: setup started")
     svc.set_context(ctx)
@@ -218,23 +236,34 @@ def setup(ctx):
     # authentication; routes add api:read / api:write for authorization).
     ctx.register_routes(build_plugin_router(svc))
 
-    # db:connected fires BEFORE setup() is called (it's what triggers plugin activation).
-    # Call on_db_connected() immediately if the DB is already ready, then subscribe for
-    # future reconnections (e.g. after a transient connection loss).
-    if db_instance.is_connected:
-        try:
-            svc.on_db_connected()
+    # db:connected fires BEFORE setup() is called (it's what triggers plugin
+    # activation). Bootstrap right away in the background if the DB is already
+    # ready (setup() must not block; the DDL runs in a thread under the core's
+    # bootstrap lock), then re-run on every reconnection. The persisted catalog
+    # path is applied in the same background task.
+    async def _initial_bootstrap():
+        if db_instance.is_connected and await svc.bootstrap():
             ctx.log.info("Server Manager: tables bootstrapped (DB was already connected)")
-        except Exception as exc:
-            ctx.log.error(f"Server Manager: DB init failed — {exc}")
+        await asyncio.to_thread(svc.load_catalog_setting)
+
+    _spawn(ctx, _initial_bootstrap())
 
     @ctx.subscribe("db:connected")
     async def _on_db_connected(payload):
-        try:
-            svc.on_db_connected()
+        if await svc.bootstrap():
             ctx.log.info("Server Manager: database ready")
-        except Exception as exc:
-            ctx.log.error(f"Server Manager: DB init failed — {exc}")
+
+    # Cluster: a peer changed the catalog path or reloaded the catalog.
+    @ctx.subscribe("server_manager:catalog_changed")
+    async def _on_catalog_changed(payload):
+        if isinstance(payload, dict) and payload.get("_origin"):
+            await asyncio.to_thread(svc.load_catalog_setting)
+
+    # Core >= 1.5.1 (bridged): the operator saved this plugin's settings.
+    @ctx.subscribe("plugin:settings_changed")
+    async def _on_settings_changed(payload):
+        if isinstance(payload, dict) and payload.get("plugin_id") == manifest.id:
+            await asyncio.to_thread(svc.load_catalog_setting)
 
     # Inbound servers from other plugins. Payloads are untrusted input; any
     # failure is reported back on server_manager:ingest_failed because the
@@ -255,7 +284,9 @@ def setup(ctx):
         if not isinstance(payload, dict):
             _ingest_failed(topic, payload, "payload must be an object")
             return
-        if not svc.is_ready:
+        # The schema bootstrap runs in the background after setup(); give an
+        # early push a moment instead of rejecting it outright.
+        if not await svc.wait_ready():
             _ingest_failed(topic, payload, "database not ready")
             return
         try:
@@ -272,7 +303,9 @@ def setup(ctx):
         if not source or not external_id:
             _ingest_failed(topic, payload, "source and external_id are required")
             return
-        if not svc.is_ready:
+        # The schema bootstrap runs in the background after setup(); give an
+        # early push a moment instead of rejecting it outright.
+        if not await svc.wait_ready():
             _ingest_failed(topic, payload, "database not ready")
             return
         try:
@@ -287,7 +320,7 @@ def setup(ctx):
     async def _on_writeback_failed(payload):
         data = payload if isinstance(payload, dict) else {}
         source, external_id = data.get("source"), data.get("external_id")
-        if not source or not external_id or not svc.is_ready:
+        if not source or not external_id or not await svc.wait_ready():
             ctx.log.warning(f"Server Manager: ignoring malformed writeback_failed {data!r}")
             return
         try:

@@ -10,7 +10,15 @@ server_manager:hardware_changed — {server_id, server_name, action, old_profile
 server_manager:status_changed   — {server_id, server_name, old_status, new_status}
 server_manager:writeback_requested — {action: update|delete, source, external_id,
                                       server, changes} — a user edited a server
-                                      whose source declared writeback=True
+                                      whose source declared writeback=True.
+                                      LOCAL ONLY: emitted on the instance that
+                                      handled the edit; in cluster mode a source
+                                      plugin running on another instance does not
+                                      see it (its next full push still reconciles).
+                                      TODO(agent): leased re-emitter for pending rows.
+server_manager:catalog_changed  — {catalog_dir, action: path|reload}; bridged
+                                  (cluster=True) so every instance re-reads the
+                                  persisted catalog path and reloads its cache
 
 Other plugins (e.g. an order-sheet generator) subscribe to
   server_manager:hardware_changed
@@ -35,15 +43,16 @@ did not persist.
 from __future__ import annotations
 
 import asyncio
+import functools
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from core.api import get_logger
 
-from ..model.catalog import CatalogLoader
-from ..model.database import get_session, ensure_tables
+from ..model.catalog import _DEFAULT_CATALOG_DIR, CatalogLoader, resolve_catalog_dir
+from ..model.database import ensure_tables, get_session, retry_write
 from ..model.models import ServerRecord
 
 log = get_logger("Plugin:ServerManager:Service")
@@ -58,6 +67,11 @@ _UPDATABLE_FIELDS = (
 
 
 _REQUIRED_ON_CREATE = ("name", "environment_id", "server_type")
+
+
+# Vault key (plugin's own path, ctx.set_secret/get_secret) holding the catalog
+# directory chosen via REST / NiceGUI. Empty = built-in catalog.
+CATALOG_DIR_KEY = "catalog_dir"
 
 
 class ServerReadOnlyError(Exception):
@@ -83,9 +97,19 @@ class ServerManagerService:
             self._loop = None
 
     def on_db_connected(self) -> None:
+        """Bootstrap the schema (blocking — run via ``asyncio.to_thread``)."""
         ensure_tables()
         self._ready = True
         log.info("ServerManager: DB tables ready")
+
+    async def bootstrap(self) -> bool:
+        """Run the cluster-safe schema bootstrap off the event loop."""
+        try:
+            await asyncio.to_thread(self.on_db_connected)
+            return True
+        except Exception as exc:
+            log.error(f"ServerManager: DB init failed — {exc}")
+            return False
 
     def get_all_statuses(self) -> list[str]:
         """Status IDs ordered as declared in catalog/settings.yml."""
@@ -95,13 +119,71 @@ class ServerManagerService:
     def is_ready(self) -> bool:
         return self._ready
 
+    async def wait_ready(self, timeout: float = 30.0) -> bool:
+        """Wait (non-blocking) for the background schema bootstrap to finish."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while not self._ready and loop.time() < deadline:
+            await asyncio.sleep(0.2)
+        return self._ready
+
     # ── Catalog ──────────────────────────────────────────────────────────────
 
     def set_catalog_dir(self, path: str) -> None:
         self.catalog.catalog_dir = Path(path)
 
-    def reload_catalog(self) -> None:
+    def reload_catalog(self, *, announce: bool = True) -> None:
+        """Re-read the catalog files; ``announce`` tells every peer to do the same."""
         self.catalog.reload()
+        if announce:
+            self._emit_catalog_changed("reload")
+
+    def apply_catalog_dir(self, raw: str | None) -> Path:
+        """Validate, apply, persist and announce a new catalog directory.
+
+        ``raw`` empty/None resets to the built-in catalog. Raises ValueError for
+        a path outside the plugin install root or a missing directory. The path
+        is persisted in the plugin's Vault store so restarts and peer instances
+        pick it up. Blocking (Vault) — call it via ``asyncio.to_thread``.
+        """
+        target = resolve_catalog_dir(raw)
+        self.set_catalog_dir(str(target))
+        stored = "" if target == _DEFAULT_CATALOG_DIR.resolve() else str(target)
+        if self._ctx is not None and hasattr(self._ctx, "set_secret"):
+            if self._ctx.set_secret(CATALOG_DIR_KEY, stored) is False:
+                log.warning("ServerManager: catalog path applied but not persisted (Vault unavailable)")
+        self._emit_catalog_changed("path")
+        return target
+
+    def load_catalog_setting(self) -> Path:
+        """Apply the persisted catalog directory (boot, peer change, settings save).
+
+        An invalid or vanished stored path falls back to the built-in catalog
+        instead of failing. Blocking (Vault) — call it via ``asyncio.to_thread``.
+        """
+        stored = ""
+        if self._ctx is not None and hasattr(self._ctx, "get_secret"):
+            try:
+                stored = self._ctx.get_secret(CATALOG_DIR_KEY) or ""
+            except Exception as exc:
+                log.warning(f"ServerManager: could not read catalog path from Vault — {exc}")
+        try:
+            target = resolve_catalog_dir(stored)
+        except ValueError as exc:
+            log.warning(f"ServerManager: stored catalog path ignored — {exc}")
+            target = _DEFAULT_CATALOG_DIR.resolve()
+        if target != self.catalog.catalog_dir.resolve():
+            self.set_catalog_dir(str(target))  # setter reloads
+        else:
+            self.catalog.reload()
+        return target
+
+    def _emit_catalog_changed(self, action: str) -> None:
+        self._emit(
+            "server_manager:catalog_changed",
+            {"catalog_dir": str(self.catalog.catalog_dir), "action": action},
+            cluster=True,
+        )
 
     # ── CRUD ─────────────────────────────────────────────────────────────────
 
@@ -119,6 +201,12 @@ class ServerManagerService:
                 select(ServerRecord).order_by(ServerRecord.name)
             ).scalars().all()
             return [r.to_dict() for r in rows]
+
+    def count_servers(self) -> int:
+        """Cheap ``SELECT COUNT(*)`` for health probes."""
+        self._require_ready()
+        with get_session() as s:
+            return int(s.execute(select(func.count(ServerRecord.id))).scalar_one())
 
     def get_server(self, server_id: int) -> dict | None:
         self._require_ready()
@@ -177,6 +265,14 @@ class ServerManagerService:
 
     def _update(self, server_id: int, data: dict, *, from_source: bool) -> dict | None:
         self._require_ready()
+        outcome = retry_write(functools.partial(self._update_tx, server_id, data, from_source))
+        if outcome is None:
+            return None
+        old, result, writeback = outcome
+        return self._after_update(old, result, writeback)
+
+    def _update_tx(self, server_id: int, data: dict, from_source: bool):
+        """One short transaction (retried on 1020/1205/1213) — no events here."""
         with get_session() as s:
             record = s.get(ServerRecord, server_id)
             if not record:
@@ -205,8 +301,9 @@ class ServerManagerService:
                 record.sync_error = None
             s.commit()
             s.refresh(record)
-            result = record.to_dict()
+            return old, record.to_dict(), writeback
 
+    def _after_update(self, old: dict, result: dict, writeback: bool) -> dict:
         changes = {
             k: {"old": old.get(k), "new": result.get(k)}
             for k in _UPDATABLE_FIELDS
@@ -245,17 +342,24 @@ class ServerManagerService:
 
     def _delete(self, server_id: int, *, from_source: bool) -> bool:
         self._require_ready()
-        with get_session() as s:
-            record = s.get(ServerRecord, server_id)
-            if not record:
-                return False
-            if not from_source and record.read_only:
-                raise ServerReadOnlyError(
-                    f"'{record.name}' is managed by '{record.source}' and is read-only"
-                )
-            data = record.to_dict()
-            s.delete(record)
-            s.commit()
+
+        def _tx() -> dict | None:
+            with get_session() as s:
+                record = s.get(ServerRecord, server_id)
+                if not record:
+                    return None
+                if not from_source and record.read_only:
+                    raise ServerReadOnlyError(
+                        f"'{record.name}' is managed by '{record.source}' and is read-only"
+                    )
+                last = record.to_dict()
+                s.delete(record)
+                s.commit()
+                return last
+
+        data = retry_write(_tx)
+        if data is None:
+            return False
         log.info(f"ServerManager: deleted '{data['name']}' (id={server_id})")
         self._emit("server_manager:server_deleted", data)
         # Deleted optimistically: if the source fails to persist the removal,
@@ -322,20 +426,26 @@ class ServerManagerService:
     def mark_writeback_failed(self, source: str, external_id: str, error: str) -> bool:
         """The source could not persist a requested edit — surface it in the UI."""
         self._require_ready()
-        with get_session() as s:
-            record = s.execute(
-                select(ServerRecord).where(
-                    ServerRecord.source == source,
-                    ServerRecord.external_id == external_id,
-                )
-            ).scalar_one_or_none()
-            if record is None:
-                return False
-            record.sync_state = "failed"
-            record.sync_error = (error or "unknown error")[:2000]
-            s.commit()
-            s.refresh(record)
-            result = record.to_dict()
+
+        def _tx() -> dict | None:
+            with get_session() as s:
+                record = s.execute(
+                    select(ServerRecord).where(
+                        ServerRecord.source == source,
+                        ServerRecord.external_id == external_id,
+                    )
+                ).scalar_one_or_none()
+                if record is None:
+                    return None
+                record.sync_state = "failed"
+                record.sync_error = (error or "unknown error")[:2000]
+                s.commit()
+                s.refresh(record)
+                return record.to_dict()
+
+        result = retry_write(_tx)
+        if result is None:
+            return False
         log.warning(f"ServerManager: write-back failed for '{result['name']}' — {error}")
         self._emit("server_manager:server_updated", {**result, "changes": {}})
         return True
@@ -395,6 +505,8 @@ class ServerManagerService:
     # ── Private ──────────────────────────────────────────────────────────────
 
     def _emit_writeback(self, action: str, server: dict, changes: dict) -> None:
+        # Local bus only (see module docstring): a source plugin on another
+        # cluster instance will not receive this event.
         self._emit("server_manager:writeback_requested", {
             "action": action,
             "source": server.get("source"),
@@ -403,9 +515,11 @@ class ServerManagerService:
             "changes": changes,
         })
 
-    def _emit(self, topic: str, payload: dict) -> None:
+    def _emit(self, topic: str, payload: dict, *, cluster: bool = False) -> None:
         if not self._ctx:
             return
+        # Only pass ``cluster`` when set so older cores / test doubles keep working.
+        emit = functools.partial(self._ctx.emit, cluster=True) if cluster else self._ctx.emit
         # The bus schedules async subscribers with asyncio.create_task(), which
         # only works on the loop thread. CRUD runs in to_thread workers, so
         # marshal those emits back onto the loop instead of losing them.
@@ -415,9 +529,9 @@ class ServerManagerService:
             running = None
         loop = self._loop
         if running is None and loop is not None and loop.is_running():
-            loop.call_soon_threadsafe(self._ctx.emit, topic, payload)
+            loop.call_soon_threadsafe(emit, topic, payload)
             return
-        self._ctx.emit(topic, payload)
+        emit(topic, payload)
 
 
 server_manager_service = ServerManagerService()

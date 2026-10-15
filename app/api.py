@@ -35,26 +35,6 @@ PLUGIN_ID = "lyndrix.plugin.server_manager"
 PERM_READ = f"plugin:{PLUGIN_ID}:api:read"
 PERM_WRITE = f"plugin:{PLUGIN_ID}:api:write"
 
-# Catalog re-homing is restricted to directories inside the plugin install root
-# (where the shipped catalog/ and examples/ dirs live). This blocks both
-# arbitrary host file reads and path traversal that could feed attacker
-# controlled YAML into the rule engine.
-_CATALOG_ALLOWED_ROOT = _DEFAULT_CATALOG_DIR.parent.resolve()
-
-
-def _resolve_catalog_dir(raw: str) -> Path:
-    """Validate an operator-supplied catalog path against the allowlisted root."""
-    candidate = Path(raw).resolve()
-    if candidate != _CATALOG_ALLOWED_ROOT and _CATALOG_ALLOWED_ROOT not in candidate.parents:
-        raise HTTPException(
-            status_code=400,
-            detail="Catalog directory must be inside the plugin install root.",
-        )
-    if not candidate.is_dir():
-        raise HTTPException(status_code=400, detail=f"Directory not found: {raw}")
-    return candidate
-
-
 # ── Payloads ───────────────────────────────────────────────────────────────────
 
 class ServerCreatePayload(BaseModel):
@@ -163,7 +143,7 @@ def _catalog_payload(service: ServerManagerService) -> dict:
     settings = cat.settings()
 
     current_dir = str(cat.catalog_dir)
-    is_default = Path(current_dir) == _DEFAULT_CATALOG_DIR
+    is_default = Path(current_dir).resolve() == _DEFAULT_CATALOG_DIR.resolve()
 
     environments = [
         {
@@ -506,14 +486,15 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
         # TODO(agent): catalog re-homing is an operator-level action but is gated
         # by the same api:write permission as ordinary CRUD; promote to a
         # dedicated permission once one exists in the core permission model.
-        path = (payload.path or "").strip()
-        target = str(_resolve_catalog_dir(path)) if path else str(_DEFAULT_CATALOG_DIR)
-
+        # Validated, persisted in Vault and announced to every instance
+        # (server_manager:catalog_changed, cluster=True) by the service.
         def _run() -> dict:
-            service.set_catalog_dir(target)
-            service.reload_catalog()
+            service.apply_catalog_dir(payload.path)
             return _catalog_payload(service)
 
-        return await asyncio.to_thread(_run)
+        try:
+            return await asyncio.to_thread(_run)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return router
