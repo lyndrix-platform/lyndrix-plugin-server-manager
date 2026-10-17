@@ -19,7 +19,7 @@ import asyncio
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path as PathParam
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.api import ApiIdentity, require_permission
@@ -297,9 +297,18 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
 
     # ── Servers (CRUD) ─────────────────────────────────────────────────────────
     @router.get("/servers")
-    async def list_servers(identity: ApiIdentity = Depends(require_permission(PERM_READ))):
+    async def list_servers(
+        in_maintenance: Optional[bool] = None,
+        identity: ApiIdentity = Depends(require_permission(PERM_READ)),
+    ):
+        """Every server carries ``maintenance`` (read-model for records with a
+        ``ci_id``, ``null`` otherwise); ``?in_maintenance=true`` keeps only the
+        servers whose maintenance state is active right now."""
         _ensure_ready()
-        return {"servers": await asyncio.to_thread(service.get_all_servers)}
+        servers = await asyncio.to_thread(
+            service.get_all_servers, in_maintenance=in_maintenance
+        )
+        return {"servers": servers}
 
     @router.get("/servers/{server_id}")
     async def get_server(
@@ -415,6 +424,20 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
             "updated": sum(1 for r in results if r["ok"] and not r.get("created")),
             "failed": sum(1 for r in results if not r["ok"]),
         }
+
+    # ── Maintenance windows (core API >= 1.13, read-model) ─────────────────────
+    @router.get("/maintenance/{ci_id}")
+    async def get_maintenance(
+        ci_id: str = PathParam(min_length=1, max_length=36),
+        identity: ApiIdentity = Depends(require_permission(PERM_READ)),
+    ):
+        """Full maintenance read-model of one configuration item: effective state
+        (``active``, ``until``, ``source``, ``next_start``, ``note``), the window
+        sets per emitting source and the live overrides, plus ``server_ids`` of
+        the records carrying this ``ci_id``. A CI nobody published anything for
+        is simply "not in maintenance" (200, empty lists)."""
+        _ensure_ready()
+        return await asyncio.to_thread(service.get_maintenance, ci_id)
 
     # ── Statuses / Stats ───────────────────────────────────────────────────────
     @router.get("/statuses")

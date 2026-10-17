@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-10-18
+### Added
+- **Maintenance badge (core API ≥ 1.13 contract, consumer side).** The plugin
+  subscribes to `maintenance:windows_published`, `maintenance:override_started`
+  and `maintenance:override_ended` and persists them per `ci_id` in the new
+  table `server_manager_maintenance` (created by the existing locked
+  `create_all` bootstrap). `replaces: true` drops every window row of that
+  source in one transaction; overrides are upserted per `override_id`, linger
+  `linger_minutes` after `override_ended` and are purged once long expired.
+  Events for CIs without a server record are kept and joined at read time, so
+  the usual order `windows_published` → `register_server` just works. Handlers
+  run on every cluster instance and write idempotently (unique key); the
+  emitter's `_origin` is deliberately not filtered.
+- `GET /servers` and `GET /servers/{id}` carry a `maintenance` field for every
+  record with a `ci_id` (`null` otherwise): `active`, `until`, `source`
+  (`window` | `override`), `next_start`, `note`, the window sets per emitting
+  source and the live overrides — evaluated at read time through
+  `core.api.maintenance.effective_state`, one batch query for the whole list.
+  `GET /servers?in_maintenance=true|false` filters on it; `GET /maintenance/{ci_id}`
+  returns the full read-model of one CI plus the `server_ids` carrying it.
+- React list: `MaintenanceBadge` next to the status badge ("Maintenance until
+  hh:mm" while a window/override runs, "Maintenance from …" for a window
+  within 24 h; tooltip with source, reason, end) and a "Maintenance" filter
+  (all / in maintenance / not in maintenance). Badge class
+  `lx-badge--maintenance` with `lx-badge--paused` as fallback on older shells.
+  Locales de/en extended. NiceGUI pages unchanged (decision E: no detail view).
+
+### Compatibility
+- `min_core_version` stays `0.0.6`: the core library is imported with a
+  `try/except ImportError`. Without it the events are still stored and returned
+  raw, but `maintenance.active` is `null` and the badge stays hidden.
+- `ServerRecord.to_dict()` and the `server_manager:*` event payloads are
+  unchanged; the read-model is attached in the service layer only.
+
 ## [1.3.0] - 2026-10-15
 ### Fixed
 - **Cluster-safe schema bootstrap.** `ensure_tables()` now runs off the event loop

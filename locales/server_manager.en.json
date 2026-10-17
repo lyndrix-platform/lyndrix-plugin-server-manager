@@ -31,7 +31,22 @@
     "syncPending": "Waiting for {{source}} to persist the change",
     "syncFailed": "Write-back failed",
     "ciLink": "Open configuration item in the Entity Registry",
-    "reportIncident": "Report an incident for this configuration item"
+    "reportIncident": "Report an incident for this configuration item",
+    "maintenanceFilter": "Maintenance filter",
+    "maintenanceAll": "Maintenance: all",
+    "inMaintenance": "In maintenance",
+    "notInMaintenance": "Not in maintenance"
+  },
+  "maintenance": {
+    "active": "Maintenance",
+    "until": "Maintenance until {{time}}",
+    "from": "Maintenance from {{time}}",
+    "sourceWindow": "Source: maintenance window ({{source}})",
+    "sourceOverride": "Source: override ({{source}})",
+    "inheritedFrom": "inherited from {{from}}",
+    "reason": "Reason: {{reason}}",
+    "end": "Ends: {{time}}",
+    "nextStart": "Next window: {{time}}"
   },
   "settings": {
     "title": "Server Manager — Settings",

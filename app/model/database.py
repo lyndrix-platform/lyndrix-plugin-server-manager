@@ -93,7 +93,7 @@ def ensure_tables() -> None:
             log.info(f"DB: create_all lost a bootstrap race ({exc}); re-checking")
             _Base.metadata.create_all(db_instance.engine, checkfirst=True)
         _migrate_columns()
-    log.info(f"DB: {_TABLE} table ready")
+    log.info(f"DB: {_TABLE} and server_manager_maintenance tables ready")
 
 
 def _run_ddl(conn, statement: str) -> bool:

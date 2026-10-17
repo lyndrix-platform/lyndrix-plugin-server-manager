@@ -39,12 +39,23 @@ The source decides per server whether it can persist edits (``writeback``):
                     next push clears it; mark_writeback_failed() flags errors.
 The source stays authoritative: its next full push overwrites anything it
 did not persist.
+
+Maintenance windows (core API >= 1.13, consumer side)
+------------------------------------------------------
+apply_windows_published() / apply_override_started() / apply_override_ended()
+persist the maintenance bus contract in ``server_manager_maintenance`` (see
+``maintenance.py``). get_all_servers()/get_server() attach a ``maintenance``
+field per record that carries a ``ci_id`` — evaluated at read time, one batch
+query, ``None`` for records without a CI. ``ServerRecord.to_dict()`` and the
+server_* event payloads stay unchanged.
 """
 from __future__ import annotations
 
 import asyncio
 import functools
+from datetime import datetime
 from pathlib import Path
+from typing import Iterable, Mapping
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -54,6 +65,7 @@ from core.api import get_logger
 from ..model.catalog import _DEFAULT_CATALOG_DIR, CatalogLoader, resolve_catalog_dir
 from ..model.database import ensure_tables, get_session, retry_write
 from ..model.models import ServerRecord
+from .maintenance import MaintenanceStore
 
 log = get_logger("Plugin:ServerManager:Service")
 
@@ -83,6 +95,7 @@ class ServerManagerService:
         self._ctx = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self.catalog = CatalogLoader()
+        self.maintenance = MaintenanceStore()
         self._ready = False
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
@@ -194,13 +207,27 @@ class ServerManagerService:
                 "Ensure the db:connected event has been received and ensure_tables() succeeded."
             )
 
-    def get_all_servers(self) -> list[dict]:
+    def get_all_servers(
+        self, *, in_maintenance: bool | None = None, now: datetime | None = None
+    ) -> list[dict]:
+        """All servers with their ``maintenance`` read-model (one batch query).
+
+        ``in_maintenance=True`` keeps only servers whose maintenance state is
+        active right now, ``False`` the rest (records without a CI included).
+        """
         self._require_ready()
         with get_session() as s:
             rows = s.execute(
                 select(ServerRecord).order_by(ServerRecord.name)
             ).scalars().all()
-            return [r.to_dict() for r in rows]
+            servers = [r.to_dict() for r in rows]
+        self._attach_maintenance(servers, now)
+        if in_maintenance is not None:
+            servers = [
+                srv for srv in servers
+                if (((srv["maintenance"] or {}).get("active") is True) == in_maintenance)
+            ]
+        return servers
 
     def count_servers(self) -> int:
         """Cheap ``SELECT COUNT(*)`` for health probes."""
@@ -208,11 +235,14 @@ class ServerManagerService:
         with get_session() as s:
             return int(s.execute(select(func.count(ServerRecord.id))).scalar_one())
 
-    def get_server(self, server_id: int) -> dict | None:
+    def get_server(self, server_id: int, *, now: datetime | None = None) -> dict | None:
         self._require_ready()
         with get_session() as s:
             row = s.get(ServerRecord, server_id)
-            return row.to_dict() if row else None
+            server = row.to_dict() if row else None
+        if server is None:
+            return None
+        return self._attach_maintenance([server], now)[0]
 
     def create_server(self, data: dict) -> dict:
         self._require_ready()
@@ -449,6 +479,64 @@ class ServerManagerService:
         log.warning(f"ServerManager: write-back failed for '{result['name']}' — {error}")
         self._emit("server_manager:server_updated", {**result, "changes": {}})
         return True
+
+    # ── Maintenance windows (core API >= 1.13 bus contract, consumer) ────────
+    # Blocking writers — the entrypoint runs them via asyncio.to_thread. They are
+    # idempotent and run on every cluster instance against the shared table.
+
+    def apply_windows_published(self, payload: Mapping) -> dict:
+        """Store a ``maintenance:windows_published`` event (replace per source)."""
+        self._require_ready()
+        return self.maintenance.apply_windows_published(payload)
+
+    def apply_override_started(self, payload: Mapping) -> int:
+        """Store a ``maintenance:override_started`` event (upsert per override_id)."""
+        self._require_ready()
+        return self.maintenance.apply_override_started(payload)
+
+    def apply_override_ended(self, payload: Mapping) -> int:
+        """Store a ``maintenance:override_ended`` event (the override lingers)."""
+        self._require_ready()
+        return self.maintenance.apply_override_ended(payload)
+
+    def purge_expired_maintenance(self, now: datetime | None = None) -> int:
+        """Delete long-expired override rows (also runs occasionally on write)."""
+        self._require_ready()
+        return self.maintenance.purge_expired(now)
+
+    def maintenance_for(
+        self, ci_ids: Iterable[str], now: datetime | None = None
+    ) -> dict[str, dict]:
+        """Maintenance read-model per ``ci_id`` — evaluated at read time."""
+        self._require_ready()
+        return self.maintenance.maintenance_for(ci_ids, now)
+
+    def get_maintenance(self, ci_id: str, now: datetime | None = None) -> dict:
+        """Full read-model of one CI plus the ids of the server records carrying it."""
+        self._require_ready()
+        state = self.maintenance.maintenance_for([ci_id], now).get(ci_id) or {}
+        with get_session() as s:
+            server_ids = s.execute(
+                select(ServerRecord.id)
+                .where(ServerRecord.ci_id == ci_id)
+                .order_by(ServerRecord.id)
+            ).scalars().all()
+        return {"ci_id": ci_id, "server_ids": [int(i) for i in server_ids], **state}
+
+    def _attach_maintenance(self, servers: list[dict], now: datetime | None = None) -> list[dict]:
+        """Add ``maintenance`` to every server dict: the read-model for records
+        with a ``ci_id``, ``None`` otherwise. One batch query for the whole list;
+        a failing read-model degrades to ``None`` instead of breaking the list."""
+        ci_ids = [srv["ci_id"] for srv in servers if srv.get("ci_id")]
+        states: dict[str, dict] = {}
+        if ci_ids:
+            try:
+                states = self.maintenance.maintenance_for(ci_ids, now)
+            except Exception as exc:
+                log.warning(f"ServerManager: maintenance read-model unavailable — {exc}")
+        for srv in servers:
+            srv["maintenance"] = states.get(srv["ci_id"]) if srv.get("ci_id") else None
+        return servers
 
     # ── Validation ───────────────────────────────────────────────────────────
     def validate_server(  # noqa: PLR0913

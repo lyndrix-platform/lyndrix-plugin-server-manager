@@ -5,10 +5,12 @@ Architecture
   examples/hardware.yml     — CPU, RAM, storage, network options + combination rules
   examples/environments.yml — Environments and IT-provider order workflows
 
-  app/model/models.py      — SQLAlchemy model (server_manager_servers table)
+  app/model/models.py      — SQLAlchemy models (server_manager_servers,
+                             server_manager_maintenance)
   app/model/database.py    — DB session helpers + table bootstrap
   app/model/catalog.py     — YAML/JSON catalog loader + rule evaluator
   app/controller/service.py — CRUD + event emission (singleton: server_manager_service)
+  app/controller/maintenance.py — maintenance-window read-model (core API >= 1.13)
   app/ui/overview.py        — Server list with search / filter
   app/controller/configurator/ — 3-step guided add/edit dialog
   app/ui/settings.py        — Plugin settings + catalog/event-bus documentation
@@ -46,6 +48,19 @@ Events consumed (push servers in from any other plugin)
   The emitting plugin must list these topics in its own permissions.emit.
   REST equivalent: PUT/DELETE /servers/external/{source}/{external_id},
   POST /servers/import (batch).
+
+Maintenance windows consumed (core API >= 1.13 contract, read-model only)
+-------------------------------------------------------------------------
+  maintenance:windows_published    — {source, published_at, replaces, items[]};
+                                     replaces=true drops the source's earlier rows
+  maintenance:override_started     — {override_id, ci_ids, until, reason, source,
+                                     started_at, linger_minutes}
+  maintenance:override_ended       — {override_id, source, ended_at, linger_minutes}
+  Stored per ci_id in server_manager_maintenance (also for CIs without a server
+  record) and evaluated when the list is read: GET /servers carries
+  `maintenance` per record with a ci_id, GET /maintenance/{ci_id} the full
+  read-model. The core library core.api.maintenance is optional — without it
+  `active` is null. This plugin emits no maintenance events.
 """
 import asyncio
 import time
@@ -77,7 +92,7 @@ from .app.ui.page import render_server_manager_page
 manifest = ModuleManifest(
     id="lyndrix.plugin.server_manager",
     name="Server Manager",
-    version="1.3.0",
+    version="1.4.0",
     description=(
         "Central server inventory with configurable hardware catalogs, "
         "combination rules, and event-bus hooks for downstream order workflows."
@@ -119,6 +134,12 @@ manifest = ModuleManifest(
             "server_manager:catalog_changed",
             # Core >= 1.5.1: the operator saved this plugin's settings.
             "plugin:settings_changed",
+            # Core API >= 1.13: maintenance-window contract (read-model for the
+            # badge). Emitted locally by the orchestrator / monitoring; every
+            # instance persists idempotently into the shared table.
+            "maintenance:windows_published",
+            "maintenance:override_started",
+            "maintenance:override_ended",
         ],
         "emit": [
             "server_manager:server_created",
@@ -329,6 +350,40 @@ def setup(ctx):
             )
         except Exception as exc:
             ctx.log.error(f"Server Manager: could not record write-back failure — {exc}")
+
+    # Maintenance windows (core API >= 1.13): read-model for the badge. Handlers
+    # run on every cluster instance and write idempotently into the shared
+    # table, so payload["_origin"] is deliberately NOT filtered. Failures are
+    # only logged — ingest_failed is shaped for (source, external_id) pushes.
+    async def _apply_maintenance(topic: str, payload, apply) -> None:
+        if not isinstance(payload, dict):
+            ctx.log.warning(f"Server Manager: {topic} ignored — payload must be an object")
+            return
+        if not await svc.wait_ready():
+            ctx.log.warning(f"Server Manager: {topic} dropped — database not ready")
+            return
+        try:
+            await asyncio.to_thread(apply, payload)
+        except Exception as exc:
+            ctx.log.warning(f"Server Manager: {topic} rejected — {exc}")
+
+    @ctx.subscribe("maintenance:windows_published")
+    async def _on_windows_published(payload):
+        await _apply_maintenance(
+            "maintenance:windows_published", payload, svc.apply_windows_published
+        )
+
+    @ctx.subscribe("maintenance:override_started")
+    async def _on_override_started(payload):
+        await _apply_maintenance(
+            "maintenance:override_started", payload, svc.apply_override_started
+        )
+
+    @ctx.subscribe("maintenance:override_ended")
+    async def _on_override_ended(payload):
+        await _apply_maintenance(
+            "maintenance:override_ended", payload, svc.apply_override_ended
+        )
 
     @ui.page("/server-manager")
     @main_layout("Server Manager")

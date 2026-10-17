@@ -6,7 +6,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { serverManagerApi } from './lib/api'
 import type {
-  ServerRecord, Catalog, StatusOption,
+  ServerRecord, Catalog, StatusOption, MaintenanceInfo,
 } from './lib/api'
 import ServerWizard from './ServerWizard'
 
@@ -130,6 +130,91 @@ function SyncIndicator({ server }: { server: ServerRecord }) {
   return null
 }
 
+// ─── Maintenance badge (core API >= 1.13) ───────────────────────────────────
+
+const DAY_MS = 24 * 60 * 60 * 1000
+// Upcoming windows are announced this far ahead ("Maintenance from …").
+const UPCOMING_HORIZON_MS = DAY_MS
+
+/** hh:mm when `iso` falls on the same calendar day as `now`, else dd.MM. hh:mm. */
+function formatWhen(iso: string, lang: string | undefined, now: Date): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const sameDay = d.toDateString() === now.toDateString()
+  return sameDay
+    ? d.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleString(lang, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+function maintenanceState(m: MaintenanceInfo, now: Date): 'active' | 'upcoming' | null {
+  if (m.active === true) return 'active'
+  if (m.next_start) {
+    const start = new Date(m.next_start).getTime()
+    if (!Number.isNaN(start) && start - now.getTime() <= UPCOMING_HORIZON_MS) return 'upcoming'
+  }
+  return null
+}
+
+/**
+ * "Maintenance until hh:mm" (window or override running) or "Maintenance from …"
+ * (next window within 24 h). The tooltip names the source, reason and end.
+ * Decision E: badge + tooltip only, no detail view in this release.
+ *
+ * Both badge modifiers are set on purpose: `lx-badge--maintenance` (shell with
+ * the --lx-state-maintenance token) is declared after `lx-badge--paused` in the
+ * host stylesheet and wins there; older shells fall back to the paused colour.
+ */
+function MaintenanceBadge({ server }: { server: ServerRecord }) {
+  const { t, i18n } = useTranslation('server_manager')
+  const m = server.maintenance
+  if (!m) return null
+  const now = new Date()
+  const state = maintenanceState(m, now)
+  if (!state) return null
+  const lang = i18n?.language || undefined
+
+  const lines: string[] = []
+  let label: string
+  if (state === 'active') {
+    label = m.until
+      ? t('maintenance.until', { defaultValue: 'Maintenance until {{time}}', time: formatWhen(m.until, lang, now) })
+      : t('maintenance.active', { defaultValue: 'Maintenance' })
+    if (m.source === 'override') {
+      const active = m.overrides.filter((o) => o.active)
+      const sources = Array.from(new Set(active.map((o) => o.source).filter(Boolean)))
+      lines.push(t('maintenance.sourceOverride', { defaultValue: 'Source: override ({{source}})', source: sources.join(', ') || '—' }))
+      const reason = active.map((o) => o.reason).find(Boolean) ?? m.note
+      if (reason) lines.push(t('maintenance.reason', { defaultValue: 'Reason: {{reason}}', reason }))
+    } else {
+      const sources = Array.from(new Set(m.windows.map((w) => w.source)))
+      const inherited = m.windows.map((w) => w.inherited_from).find(Boolean)
+      lines.push(
+        t('maintenance.sourceWindow', { defaultValue: 'Source: maintenance window ({{source}})', source: sources.join(', ') || '—' })
+        + (inherited ? ` · ${t('maintenance.inheritedFrom', { defaultValue: 'inherited from {{from}}', from: inherited })}` : ''),
+      )
+      if (m.note) lines.push(t('maintenance.reason', { defaultValue: 'Reason: {{reason}}', reason: m.note }))
+    }
+    if (m.until) lines.push(t('maintenance.end', { defaultValue: 'Ends: {{time}}', time: formatWhen(m.until, lang, now) }))
+  } else {
+    const start = formatWhen(m.next_start!, lang, now)
+    label = t('maintenance.from', { defaultValue: 'Maintenance from {{time}}', time: start })
+    const sources = Array.from(new Set(m.windows.map((w) => w.source)))
+    lines.push(t('maintenance.nextStart', { defaultValue: 'Next window: {{time}}', time: start }))
+    if (sources.length) lines.push(t('maintenance.sourceWindow', { defaultValue: 'Source: maintenance window ({{source}})', source: sources.join(', ') }))
+  }
+
+  return (
+    <span
+      className="lx-badge lx-badge--paused lx-badge--maintenance"
+      title={lines.join('\n')}
+      style={state === 'upcoming' ? { opacity: 0.7 } : undefined}
+    >
+      <span className="material-icons" style={{ fontSize: 13 }}>{state === 'active' ? 'construction' : 'schedule'}</span>
+      {label}
+    </span>
+  )
+}
+
 function useCatalog() {
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   useEffect(() => {
@@ -174,6 +259,8 @@ function ServerListView({
   const [envFilter, setEnvFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
+  // '' = all, 'active' = in maintenance right now, 'none' = not in maintenance
+  const [maintFilter, setMaintFilter] = useState<'' | 'active' | 'none'>('')
   const [confirmId, setConfirmId] = useState<number | null>(null)
 
   const load = useCallback(async () => {
@@ -199,13 +286,17 @@ function ServerListView({
       if (envFilter && s.environment_id !== envFilter) return false
       if (statusFilter && s.status !== statusFilter) return false
       if (typeFilter && s.server_type !== typeFilter) return false
+      if (maintFilter) {
+        const inMaintenance = s.maintenance?.active === true
+        if (maintFilter === 'active' ? !inMaintenance : inMaintenance) return false
+      }
       if (q) {
         const hay = `${s.name} ${s.hostname ?? ''} ${(s.tags ?? []).join(' ')}`.toLowerCase()
         if (!hay.includes(q)) return false
       }
       return true
     })
-  }, [servers, search, envFilter, statusFilter, typeFilter])
+  }, [servers, search, envFilter, statusFilter, typeFilter, maintFilter])
 
   async function doDelete(id: number) {
     try {
@@ -259,6 +350,17 @@ function ServerListView({
         <select className="lx-select" style={{ flex: '0 0 140px' }} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
           <option value="">{t('list.allTypes', { defaultValue: 'All types' })}</option>
           {(catalog?.server_types ?? []).map((t) => (<option key={t.id} value={t.id}>{t.label || t.id}</option>))}
+        </select>
+        <select
+          className="lx-select"
+          style={{ flex: '0 0 160px' }}
+          value={maintFilter}
+          onChange={(e) => setMaintFilter(e.target.value as '' | 'active' | 'none')}
+          title={t('list.maintenanceFilter', { defaultValue: 'Maintenance filter' })}
+        >
+          <option value="">{t('list.maintenanceAll', { defaultValue: 'Maintenance: all' })}</option>
+          <option value="active">{t('list.inMaintenance', { defaultValue: 'In maintenance' })}</option>
+          <option value="none">{t('list.notInMaintenance', { defaultValue: 'Not in maintenance' })}</option>
         </select>
       </div>
 
@@ -336,8 +438,9 @@ function ServerListView({
                     )}
                   </td>
                   <td>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
                       <StatusBadge status={s.status} statuses={statuses} />
+                      <MaintenanceBadge server={s} />
                       <SyncIndicator server={s} />
                     </span>
                   </td>

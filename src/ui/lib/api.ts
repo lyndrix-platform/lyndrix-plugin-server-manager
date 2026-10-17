@@ -32,6 +32,48 @@ export interface ServerRecord {
   sync_error: string | null
   // Entity Registry UUID of the configuration item (deep link into the registry).
   ci_id: string | null
+  // Maintenance read-model (core API >= 1.13), evaluated server-side at read
+  // time. null for records without a ci_id; absent on older plugin backends.
+  maintenance?: MaintenanceInfo | null
+}
+
+// ─── Maintenance windows (core API >= 1.13) ──────────────────────────────────
+
+/** One published window set of an emitting source (bus normal form). */
+export interface MaintenanceWindowSet {
+  source: string
+  inherited_from: 'host' | 'stage_default' | 'site_default' | string | null
+  windows: Record<string, unknown>[]
+  updated_at: string | null
+}
+
+/** A running deploy / manual override; expired ones are not returned. */
+export interface MaintenanceOverride {
+  override_id: string
+  source: string
+  reason: string | null
+  until: string | null
+  started_at: string | null
+  ended_at: string | null
+  linger_minutes: number
+  effective_until: string | null
+  active: boolean
+}
+
+export interface MaintenanceInfo {
+  // null = the core cannot evaluate windows (library missing); raw data only.
+  active: boolean | null
+  until: string | null
+  source: 'window' | 'override' | null
+  next_start: string | null
+  note: string | null
+  windows: MaintenanceWindowSet[]
+  overrides: MaintenanceOverride[]
+}
+
+export interface MaintenanceReadModel extends MaintenanceInfo {
+  ci_id: string
+  server_ids: number[]
 }
 
 export interface ServerInput {
@@ -303,9 +345,15 @@ export const pluginApi = {
 // ─── Server Manager surface ─────────────────────────────────────────────────
 
 export const serverManagerApi = {
-  listServers: () => pluginApi.get<{ servers: ServerRecord[] }>('servers'),
+  listServers: (opts: { inMaintenance?: boolean } = {}) =>
+    pluginApi.get<{ servers: ServerRecord[] }>(
+      opts.inMaintenance === undefined ? 'servers' : `servers?in_maintenance=${opts.inMaintenance}`,
+    ),
 
   getServer: (id: number) => pluginApi.get<{ server: ServerRecord }>(`servers/${id}`),
+
+  getMaintenance: (ciId: string) =>
+    pluginApi.get<MaintenanceReadModel>(`maintenance/${encodeURIComponent(ciId)}`),
 
   createServer: (data: ServerInput) =>
     pluginApi.post<{ server: ServerRecord }>('servers', data),

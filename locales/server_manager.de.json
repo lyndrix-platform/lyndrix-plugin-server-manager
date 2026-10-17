@@ -31,7 +31,22 @@
     "syncPending": "Warte darauf, dass {{source}} die Änderung übernimmt",
     "syncFailed": "Rückschreiben fehlgeschlagen",
     "ciLink": "Configuration Item in der Entity Registry öffnen",
-    "reportIncident": "Incident für dieses Configuration Item melden"
+    "reportIncident": "Incident für dieses Configuration Item melden",
+    "maintenanceFilter": "Wartungsfilter",
+    "maintenanceAll": "Wartung: alle",
+    "inMaintenance": "In Wartung",
+    "notInMaintenance": "Nicht in Wartung"
+  },
+  "maintenance": {
+    "active": "Wartung",
+    "until": "Wartung bis {{time}}",
+    "from": "Wartung ab {{time}}",
+    "sourceWindow": "Quelle: Wartungsfenster ({{source}})",
+    "sourceOverride": "Quelle: Override ({{source}})",
+    "inheritedFrom": "geerbt von {{from}}",
+    "reason": "Grund: {{reason}}",
+    "end": "Ende: {{time}}",
+    "nextStart": "Nächstes Fenster: {{time}}"
   },
   "settings": {
     "title": "Server Manager — Einstellungen",

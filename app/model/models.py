@@ -1,7 +1,9 @@
 """SQLAlchemy model for the Server Manager plugin."""
 from __future__ import annotations
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean, Column, DateTime, Index, Integer, JSON, String, Text, UniqueConstraint, func,
+)
 from sqlalchemy.orm import DeclarativeBase
 
 
@@ -87,3 +89,51 @@ class ServerRecord(_Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+# Row kinds of the maintenance read-model.
+MAINT_KIND_WINDOW = "window"
+MAINT_KIND_OVERRIDE = "override"
+# Window rows have no override id; the unique key still needs a non-NULL value
+# there (NULLs never collide in a unique index), so they carry "".
+MAINT_NO_OVERRIDE = ""
+
+
+class MaintenanceRecord(_Base):
+    """Read-model of the maintenance-window bus contract (core API >= 1.13).
+
+    One row per published window set ``(ci_id, source)`` and one row per
+    ``(ci_id, override_id)``. Rows are keyed by the Entity-Registry ``ci_id``
+    only — events for CIs that have no server record (yet) are stored too and
+    joined to ``server_manager_servers.ci_id`` at read time. Nothing here is
+    evaluated on write: whether a window is running is computed when read
+    (``core.api.maintenance.effective_state``), so no timers are needed.
+    """
+
+    __tablename__ = "server_manager_maintenance"
+    __table_args__ = (
+        UniqueConstraint(
+            "ci_id", "source", "kind", "override_id", name="uq_server_manager_maint_key"
+        ),
+        Index("ix_server_manager_maintenance_source", "source"),
+        Index("ix_server_manager_maintenance_override_id", "override_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ci_id = Column(String(36), nullable=False, index=True)
+    kind = Column(String(16), nullable=False)  # window | override
+    # Emitting plugin ("iac-orchestrator", "monitoring", ...). A publish with
+    # replaces=true drops every window row of that source first.
+    source = Column(String(64), nullable=False)
+    override_id = Column(String(128), nullable=False, default=MAINT_NO_OVERRIDE)
+    # kind=window: list of windows in the bus normal form ({"type": ...}).
+    windows = Column(JSON, nullable=True)
+    inherited_from = Column(String(32), nullable=True)  # host | stage_default | site_default
+    # kind=override: active from started_at until `until`; after override_ended
+    # it lingers until ended_at + linger_minutes. Naive UTC in the DB.
+    until = Column(DateTime, nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    ended_at = Column(DateTime, nullable=True)
+    linger_minutes = Column(Integer, nullable=True)
+    reason = Column(Text, nullable=True)
+    updated_at = Column(DateTime, nullable=False, default=func.now(), onupdate=func.now())
