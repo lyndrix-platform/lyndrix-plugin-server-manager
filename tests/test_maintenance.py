@@ -53,6 +53,10 @@ def svc(monkeypatch):
     monkeypatch.setattr(database, "db_instance", fake_db)
 
     service = ServerManagerService()
+    # Pin the store's clock to the fixture instant: the write-side purge of
+    # expired overrides must judge the rows against the same "now" the tests
+    # use, not the wall clock (the suite used to fail from 2026-10-19 on).
+    service.maintenance.clock = lambda: NOW
     service.set_context(_FakeCtx())
     service.on_db_connected()
     return service
@@ -541,3 +545,21 @@ def test_iso_fallback_parser_matches_core_rules(monkeypatch):
     )
     with pytest.raises(ValueError):
         mnt._parse_iso("yesterday", "t")
+
+
+def test_write_side_purge_uses_the_injected_clock(svc):
+    """Regression for the date bomb: the purge that piggybacks on writes runs on
+    the store's clock, so rows around a fixed test instant survive regardless of
+    the real date — and are purged once that clock has moved past the grace."""
+    svc.apply_override_started(
+        _started("deploy-1", [CI_A], until=NOW + timedelta(hours=1), started=NOW)
+    )
+    svc.maintenance._last_purge = None
+    svc.apply_override_ended({"override_id": "other", "source": "x"})  # triggers the purge
+    assert len(svc.maintenance_for([CI_A], now=NOW)[CI_A]["overrides"]) == 1
+
+    svc.maintenance.clock = lambda: NOW + timedelta(days=3)
+    svc.maintenance._last_purge = None
+    svc.apply_override_ended({"override_id": "other", "source": "x"})
+    with mnt.get_session() as s:
+        assert s.query(mnt.MaintenanceRecord).filter_by(override_id="deploy-1").count() == 0

@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Iterator, Mapping, Sequence, TypeVar
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar
 
 from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -239,8 +239,12 @@ def _override_id(payload: Mapping[str, Any], topic: str) -> str:
     return override_id
 
 
-def parse_override_started(payload: Mapping[str, Any]) -> dict:
-    """``maintenance:override_started`` → normalised dict (aware UTC datetimes)."""
+def parse_override_started(
+    payload: Mapping[str, Any], now: datetime | None = None
+) -> dict:
+    """``maintenance:override_started`` → normalised dict (aware UTC datetimes).
+
+    ``now`` is the processing time used for a missing ``started_at``."""
     override_id = _override_id(payload, "override_started")
     raw_ids = payload.get("ci_ids")
     if raw_ids is None:
@@ -261,7 +265,9 @@ def parse_override_started(payload: Mapping[str, Any]) -> dict:
     until = _parse_iso(payload.get("until"), "until")
     started_raw = payload.get("started_at")
     started_at = (
-        _parse_iso(started_raw, "started_at") if started_raw is not None else utcnow()
+        _parse_iso(started_raw, "started_at")
+        if started_raw is not None
+        else (now or utcnow())
     )
     reason = payload.get("reason")
     return {
@@ -277,7 +283,9 @@ def parse_override_started(payload: Mapping[str, Any]) -> dict:
     }
 
 
-def parse_override_ended(payload: Mapping[str, Any]) -> dict:
+def parse_override_ended(
+    payload: Mapping[str, Any], now: datetime | None = None
+) -> dict:
     """``maintenance:override_ended`` → normalised dict (``ended_at`` missing = now)."""
     override_id = _override_id(payload, "override_ended")
     ended_raw = payload.get("ended_at")
@@ -286,7 +294,9 @@ def parse_override_ended(payload: Mapping[str, Any]) -> dict:
         "override_id": override_id,
         "source": str(source)[:_SOURCE_MAX] if source else None,
         "ended_at": (
-            _parse_iso(ended_raw, "ended_at") if ended_raw is not None else utcnow()
+            _parse_iso(ended_raw, "ended_at")
+            if ended_raw is not None
+            else (now or utcnow())
         ),
         "linger_minutes": _as_int(
             payload.get("linger_minutes"), "linger_minutes", None
@@ -421,8 +431,16 @@ class MaintenanceStore:
     short READ COMMITTED transaction each and retry on MariaDB 1020/1205/1213.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, clock: Callable[[], datetime] | None = None) -> None:
+        # Every "what time is it" of the store goes through this clock (default
+        # values of missing timestamps, the expiry purge, read-time evaluation
+        # without an explicit ``now``), so tests can pin it instead of racing
+        # the wall clock.
+        self.clock: Callable[[], datetime] = clock or utcnow
         self._last_purge: float | None = None
+
+    def _now(self) -> datetime:
+        return _aware(self.clock()) or utcnow()
 
     # ── Writers ──
 
@@ -474,7 +492,7 @@ class MaintenanceStore:
 
     def apply_override_started(self, payload: Mapping[str, Any]) -> int:
         """Upsert one override row per ``ci_id``; returns the number of rows touched."""
-        data = parse_override_started(payload)
+        data = parse_override_started(payload, self._now())
         if not data["ci_ids"]:
             log.info(
                 f"Maintenance: override {data['override_id']} has no usable ci_ids — ignored"
@@ -528,7 +546,7 @@ class MaintenanceStore:
 
     def apply_override_ended(self, payload: Mapping[str, Any]) -> int:
         """Mark an override as ended (it lingers ``linger_minutes``); rows touched."""
-        data = parse_override_ended(payload)
+        data = parse_override_ended(payload, self._now())
 
         def _tx() -> int:
             with get_session() as s:
@@ -563,7 +581,7 @@ class MaintenanceStore:
         """Delete overrides whose effective end lies more than ``PURGE_GRACE`` in
         the past. Windows never expire (``once`` windows are replaced by the
         next publish of their source)."""
-        at = _aware(now) or utcnow()
+        at = _aware(now) or self._now()
         cutoff = at - PURGE_GRACE
         cutoff_db = _to_db(cutoff)
 
@@ -623,7 +641,7 @@ class MaintenanceStore:
         "not in maintenance, nothing scheduled".
         """
         wanted = [ci_id for ci_id in dict.fromkeys(ci_ids) if ci_id]
-        at = _aware(now) or utcnow()
+        at = _aware(now) or self._now()
         buckets: dict[str, tuple[list[MaintenanceRecord], list[MaintenanceRecord]]] = {
             ci_id: ([], []) for ci_id in wanted
         }
