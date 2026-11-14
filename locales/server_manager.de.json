@@ -53,6 +53,8 @@
     "resetDefault": "Auf Standard-Katalog zurückgesetzt.",
     "pathSet": "Katalogpfad gesetzt: {{path}}",
     "pathFailed": "Pfad konnte nicht gesetzt werden",
+    "adminOnly": "Katalog ändern oder neu laden erfordert die Berechtigung „Server Manager Administration“.",
+    "bundledFallback": "Keine Katalogdateien in diesem Verzeichnis — der mitgelieferte Beispielkatalog wird verwendet ({{path}}).",
     "reloaded": "Katalog neu geladen.",
     "reloadFailed": "Reload fehlgeschlagen",
     "catalogConfig": "Katalog-Konfiguration",

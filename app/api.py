@@ -3,9 +3,10 @@
 A single router is mounted by core under
 ``/api/plugins/lyndrix.plugin.server_manager/`` via ``ctx.register_routes()``.
 The registry enforces authentication for every route automatically; we
-additionally require ``api:read`` on reads and ``api:write`` on mutations so a
-merely-authenticated user cannot create/edit/delete servers or reconfigure the
-catalog without the write permission.
+additionally require ``api:read`` on reads and ``api:write`` on the manual CRUD.
+The ingest routes (acting as a source system) and the catalog controls need the
+custom ``server_manager:ingest`` / ``server_manager:admin`` permissions, because
+the core hands ``api:write`` to every ordinary user.
 
 The React CRUD UI and the NiceGUI configurator both call the same
 ``ServerManagerService`` singleton — this router is the HTTP surface used by the
@@ -34,6 +35,15 @@ from .model.catalog import _DEFAULT_CATALOG_DIR
 PLUGIN_ID = "lyndrix.plugin.server_manager"
 PERM_READ = f"plugin:{PLUGIN_ID}:api:read"
 PERM_WRITE = f"plugin:{PLUGIN_ID}:api:write"
+# The core grants every plugin's api:read to INT_VIEWER and api:write to
+# INT_USER with no opt-out, so "api:write" means "every ordinary user".
+# Operator-level actions are therefore gated by custom permissions (declared in
+# the manifest, mapped to INT_ADMIN) whose names do not end in :api:read/:api:write
+# and are thus matched exactly — never satisfied by a baseline or global grant.
+#   ingest — push/remove servers as a source system (REST ingest routes)
+#   admin  — re-home / reload the cluster-wide catalog, ingest as ANY source
+PERM_INGEST = f"plugin:{PLUGIN_ID}:server_manager:ingest"
+PERM_ADMIN = f"plugin:{PLUGIN_ID}:server_manager:admin"
 
 # ── Payloads ───────────────────────────────────────────────────────────────────
 
@@ -280,6 +290,38 @@ def _catalog_payload(service: ServerManagerService) -> dict:
     }
 
 
+# ── Ingest ownership ───────────────────────────────────────────────────────────
+
+def source_denied_reason(identity: ApiIdentity, source: str) -> Optional[str]:
+    """Why ``identity`` may not act as ingest ``source`` — ``None`` when it may.
+
+    A record's ``source`` is its owner: only the owner may update or delete it
+    and decide about ``writeback`` (read-only vs. editable here). On the bus
+    the emitting plugin states its source; over REST the source is derived from
+    the caller instead of being freely choosable: a holder of the ingest
+    permission can only act as the source named like its own account (a sync
+    job runs under a service account / API key of that name). The master
+    system key and holders of the admin permission may act for any source
+    (migrations, cleaning up after a retired source).
+    """
+    if getattr(identity, "is_system", False) or identity.allows(PERM_ADMIN):
+        return None
+    own = (getattr(identity, "username", "") or "").strip()
+    if own and own == (source or "").strip():
+        return None
+    return (
+        f"'{own or 'this account'}' may only ingest as source '{own}' — records of "
+        f"source '{source}' belong to that source (acting for another source "
+        f"requires {PERM_ADMIN})"
+    )
+
+
+def _require_source(identity: ApiIdentity, source: str) -> None:
+    reason = source_denied_reason(identity, source)
+    if reason:
+        raise HTTPException(status_code=403, detail=reason)
+
+
 # ── Router ──────────────────────────────────────────────────────────────────────
 
 def build_plugin_router(service: ServerManagerService) -> APIRouter:
@@ -372,6 +414,10 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
     # ── Ingest (external systems) ──────────────────────────────────────────────
     # Idempotent push API for other systems; keyed by (source, external_id) so
     # a sync job can re-send its whole inventory every run without duplicates.
+    # Gated by the custom ingest permission (not api:write — see PERM_INGEST)
+    # and bound to the caller's own source (source_denied_reason): an ordinary
+    # user can neither push as "iac-orchestrator" to make its read-only records
+    # editable, nor re-point their ci_id, nor delete them.
     async def _upsert(data: Dict[str, Any]) -> Dict[str, Any]:
         try:
             server, created = await asyncio.to_thread(service.upsert_external_server, data)
@@ -386,8 +432,9 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
         source: str,
         external_id: str,
         payload: ExternalServerBody,  # source/external_id come from the path
-        identity: ApiIdentity = Depends(require_permission(PERM_WRITE)),
+        identity: ApiIdentity = Depends(require_permission(PERM_INGEST)),
     ):
+        _require_source(identity, source)
         _ensure_ready()
         data = payload.model_dump(exclude_unset=True)
         return await _upsert({**data, "source": source, "external_id": external_id})
@@ -396,8 +443,9 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
     async def delete_external_server(
         source: str,
         external_id: str,
-        identity: ApiIdentity = Depends(require_permission(PERM_WRITE)),
+        identity: ApiIdentity = Depends(require_permission(PERM_INGEST)),
     ):
+        _require_source(identity, source)
         _ensure_ready()
         if not await asyncio.to_thread(service.remove_external_server, source, external_id):
             raise HTTPException(
@@ -408,15 +456,20 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
     @router.post("/servers/import")
     async def import_servers(
         payload: ImportPayload,
-        identity: ApiIdentity = Depends(require_permission(PERM_WRITE)),
+        identity: ApiIdentity = Depends(require_permission(PERM_INGEST)),
     ):
         """Batch upsert. Each item is applied independently; failures are
-        reported per item instead of aborting the whole import."""
+        reported per item instead of aborting the whole import — including
+        items whose ``source`` the caller may not act for."""
         _ensure_ready()
         results: List[Dict[str, Any]] = []
         for item in payload.servers:
             data = item.model_dump(exclude_unset=True)
             key = {"source": item.source, "external_id": item.external_id}
+            denied = source_denied_reason(identity, item.source)
+            if denied:
+                results.append({**key, "ok": False, "error": denied})
+                continue
             try:
                 server, created = await asyncio.to_thread(service.upsert_external_server, data)
                 results.append({**key, "ok": True, "created": created, "id": server["id"]})
@@ -493,31 +546,33 @@ def build_plugin_router(service: ServerManagerService) -> APIRouter:
         return await asyncio.to_thread(_run)
 
     # ── Catalog ────────────────────────────────────────────────────────────────
+    # ``can_manage`` tells the UI whether to offer the catalog controls; the
+    # routes below enforce it — the flag is a hint, not the gate.
     @router.get("/catalog")
     async def get_catalog(identity: ApiIdentity = Depends(require_permission(PERM_READ))):
-        return await asyncio.to_thread(_catalog_payload, service)
+        payload = await asyncio.to_thread(_catalog_payload, service)
+        return {**payload, "can_manage": identity.allows(PERM_ADMIN)}
 
+    # Reload and re-homing change the catalog of EVERY instance and user
+    # (persisted in Vault, broadcast cluster-wide) → admin permission.
     @router.post("/catalog/reload")
-    async def reload_catalog(identity: ApiIdentity = Depends(require_permission(PERM_WRITE))):
+    async def reload_catalog(identity: ApiIdentity = Depends(require_permission(PERM_ADMIN))):
         def _run() -> dict:
             service.reload_catalog()
-            return _catalog_payload(service)
+            return {**_catalog_payload(service), "can_manage": True}
 
         return await asyncio.to_thread(_run)
 
     @router.post("/catalog/path")
     async def set_catalog_path(
         payload: CatalogPathPayload,
-        identity: ApiIdentity = Depends(require_permission(PERM_WRITE)),
+        identity: ApiIdentity = Depends(require_permission(PERM_ADMIN)),
     ):
-        # TODO(agent): catalog re-homing is an operator-level action but is gated
-        # by the same api:write permission as ordinary CRUD; promote to a
-        # dedicated permission once one exists in the core permission model.
         # Validated, persisted in Vault and announced to every instance
         # (server_manager:catalog_changed, cluster=True) by the service.
         def _run() -> dict:
             service.apply_catalog_dir(payload.path)
-            return _catalog_payload(service)
+            return {**_catalog_payload(service), "can_manage": True}
 
         try:
             return await asyncio.to_thread(_run)

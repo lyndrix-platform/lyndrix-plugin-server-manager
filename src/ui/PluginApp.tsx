@@ -524,6 +524,11 @@ function SettingsView() {
     } finally { setBusy(false) }
   }
 
+  // Catalog reload / re-homing needs the server_manager:admin permission; the
+  // backend enforces it (403) — this only hides controls that would fail.
+  // Older backends do not send the flag: keep the controls enabled there.
+  const canManage = catalog?.can_manage !== false
+
   const stats = catalog?.stats ?? {}
   const statEntries: [string, string][] = [
     ['cpu_options', t('settings.stats.cpu_options', { defaultValue: 'CPU options' })],
@@ -563,12 +568,23 @@ function SettingsView() {
           className="lx-input"
           value={pathInput}
           onChange={(e) => setPathInput(e.target.value)}
+          disabled={!canManage}
           placeholder={catalog?.is_default ? t('settings.defaultPlaceholder', { defaultValue: 'Default: {{path}}', path: catalog?.catalog_dir ?? '' }) : ''}
         />
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <Button label={t('settings.applyPath', { defaultValue: 'Apply path' })} icon="save" onClick={() => void applyPath()} disabled={busy} variant="primary" />
-          <Button label={t('settings.reloadCatalog', { defaultValue: 'Reload catalog' })} icon="refresh" onClick={() => void reload()} disabled={busy} />
+          <Button label={t('settings.applyPath', { defaultValue: 'Apply path' })} icon="save" onClick={() => void applyPath()} disabled={busy || !canManage} variant="primary" />
+          <Button label={t('settings.reloadCatalog', { defaultValue: 'Reload catalog' })} icon="refresh" onClick={() => void reload()} disabled={busy || !canManage} />
         </div>
+        {!canManage && (
+          <div style={{ fontSize: '0.75rem', color: 'var(--lx-text-muted)' }}>
+            {t('settings.adminOnly', { defaultValue: 'Changing or reloading the catalog requires the Server Manager administration permission.' })}
+          </div>
+        )}
+        {catalog?.bundled_fallback && (
+          <div style={{ fontSize: '0.75rem', color: 'var(--lx-text-muted)' }}>
+            {t('settings.bundledFallback', { defaultValue: 'No catalog files in this directory — the bundled example catalog is in use ({{path}}).', path: catalog?.effective_dir ?? '' })}
+          </div>
+        )}
         <div className="lx-mono" style={{ fontSize: '0.7rem', color: 'var(--lx-text-muted)' }}>
           {t('settings.active', { defaultValue: 'Active: {{path}}', path: catalog?.catalog_dir ?? '—' })} {catalog?.is_default ? t('settings.defaultTag', { defaultValue: '(default)' }) : ''}
         </div>

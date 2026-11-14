@@ -53,6 +53,8 @@
     "resetDefault": "Reset to default catalog.",
     "pathSet": "Catalog path set: {{path}}",
     "pathFailed": "Could not set path",
+    "adminOnly": "Changing or reloading the catalog requires the Server Manager administration permission.",
+    "bundledFallback": "No catalog files in this directory — the bundled example catalog is in use ({{path}}).",
     "reloaded": "Catalog reloaded.",
     "reloadFailed": "Reload failed",
     "catalogConfig": "Catalog configuration",

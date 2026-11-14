@@ -263,6 +263,11 @@ export interface ValidationIssue {
 export interface Catalog {
   catalog_dir: string
   is_default: boolean
+  /** Configured dir has no catalog files → the bundled examples/ catalog is served. */
+  bundled_fallback?: boolean
+  effective_dir?: string
+  /** Caller holds server_manager:admin (catalog reload / re-homing). Absent on older backends. */
+  can_manage?: boolean
   environments: EnvironmentOption[]
   providers: Provider[]
   server_types: CatalogOption[]

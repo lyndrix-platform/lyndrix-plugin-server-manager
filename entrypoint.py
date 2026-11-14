@@ -47,7 +47,9 @@ Events consumed (push servers in from any other plugin)
   here, True lets users edit it and routes the edit back to the source.
   The emitting plugin must list these topics in its own permissions.emit.
   REST equivalent: PUT/DELETE /servers/external/{source}/{external_id},
-  POST /servers/import (batch).
+  POST /servers/import (batch) — these need the custom permission
+  server_manager:ingest and the source must be named like the calling account
+  (any source with server_manager:admin / the system key).
 
 Maintenance windows consumed (core API >= 1.13 contract, read-model only)
 -------------------------------------------------------------------------
@@ -155,12 +157,32 @@ manifest = ModuleManifest(
     # Identity & Permissions 2.0: roles use fully-qualified per-plugin
     # permissions (plugin:<id>:api:*) rather than the bare api:read/write,
     # so granting a role here can never leak into a global cross-plugin grant.
+    # Operator-level actions. The core's baseline grants hand api:write to every
+    # INT_USER, so these are separate permissions that only the admin role (and
+    # roles an operator assigns deliberately) carry.
+    custom_permissions=[
+        {"id": "server_manager:admin", "label": "Server Manager Administration",
+         "description": "Re-home and reload the catalog; ingest servers on behalf of any source",
+         "icon": "admin_panel_settings"},
+        {"id": "server_manager:ingest", "label": "Server Manager Ingest",
+         "description": "Push servers in over the REST ingest routes as the source "
+                        "named like the calling account",
+         "icon": "input"},
+    ],
     roles=[
         {"id": "admin", "label": "Server Manager Administrator",
          "permissions": ["plugin:lyndrix.plugin.server_manager:api:read",
-                          "plugin:lyndrix.plugin.server_manager:api:write"],
+                          "plugin:lyndrix.plugin.server_manager:api:write",
+                          "plugin:lyndrix.plugin.server_manager:server_manager:admin",
+                          "plugin:lyndrix.plugin.server_manager:server_manager:ingest"],
          "auto_map_groups": ["INT_ADMIN"],
          "description": "Full control over server inventory and catalog configuration."},
+        {"id": "source", "label": "Server Manager Source System",
+         "permissions": ["plugin:lyndrix.plugin.server_manager:api:read",
+                          "plugin:lyndrix.plugin.server_manager:server_manager:ingest"],
+         "auto_map_groups": [],
+         "description": "Service account of a system that pushes its servers in "
+                        "(REST ingest as the source named like the account)."},
         {"id": "operator", "label": "Server Manager Operator",
          "permissions": ["plugin:lyndrix.plugin.server_manager:api:read",
                           "plugin:lyndrix.plugin.server_manager:api:write"],
