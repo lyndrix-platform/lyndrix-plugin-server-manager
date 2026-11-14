@@ -254,6 +254,10 @@ def _catalog_payload(service: ServerManagerService) -> dict:
     return {
         "catalog_dir": current_dir,
         "is_default": is_default,
+        # True while the configured directory holds no catalog files and the
+        # bundled examples/ catalog is served instead (additive field).
+        "bundled_fallback": cat.using_bundled_fallback,
+        "effective_dir": str(cat.effective_dir),
         "environments": environments,
         "providers": providers,
         "server_types": hw.get_server_types(),

@@ -219,19 +219,33 @@ async def health(ctx) -> PluginHealthStatus:
         )
 
     latency = round((time.perf_counter() - start) * 1000, 1)
-    catalog_loaded = bool(getattr(svc, "catalog", None))
+    try:
+        catalog = await asyncio.to_thread(svc.catalog_status)
+    except Exception as exc:  # unreadable catalog must not turn the probe into an error
+        catalog = {"loaded": False, "dir": None, "bundled_fallback": False, "error": str(exc)}
     details = {
         "db_connected": True,
         "ready": True,
         "servers": servers,
-        "catalog_loaded": catalog_loaded,
+        "catalog_loaded": catalog["loaded"],
+        "catalog_dir": catalog["dir"],
+        "catalog_bundled_fallback": catalog["bundled_fallback"],
     }
-    # DB works but the hardware catalog never loaded → CRUD reads work, but the
-    # guided add/validate workflows are broken. Usable-but-impaired = degraded.
-    if not catalog_loaded:
+    # DB works but no usable hardware catalog → CRUD reads work, but the guided
+    # add/validate workflows are broken. Usable-but-impaired = degraded.
+    if not catalog["loaded"]:
         return PluginHealthStatus(
             status="degraded",
-            details={**details, "reason": "catalog_not_loaded"},
+            details={
+                **details,
+                "reason": "catalog_not_loaded",
+                "message": (
+                    "No usable catalog (server types / environments) in "
+                    f"{catalog['dir'] or 'the catalog directory'} — add the catalog "
+                    "files or reset the catalog path in the plugin settings."
+                ),
+                **({"error": catalog["error"]} if catalog.get("error") else {}),
+            },
             latency_ms=latency,
         )
     return PluginHealthStatus(status="ok", details=details, latency_ms=latency)

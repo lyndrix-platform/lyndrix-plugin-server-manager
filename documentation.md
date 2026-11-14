@@ -183,7 +183,7 @@ Das Badge nutzt die Shell-Klasse `lx-badge--maintenance` (Token `--lx-state-main
 
 ## Konfiguration & Katalog
 
-Die Hardware- und Umgebungskataloge werden aus YAML-Dateien im `examples/`-Verzeichnis geladen. Sie definieren:
+Die Hardware- und Umgebungskataloge werden aus YAML-Dateien im Katalogverzeichnis geladen (Standard `catalog/` im Plugin-Verzeichnis, umstellbar in den Einstellungen). Das Verzeichnis `catalog/` ist standortspezifisch und nicht Teil des Repositories: fehlt es oder enthält es keine Katalogdateien, lädt das Plugin als Ganzes den mitgelieferten Beispielkatalog aus `examples/` (`bundled_fallback: true` in `GET /catalog` und in den Health-Details). Enthält das Verzeichnis Dateien, aber keinen nutzbaren Katalog (keine Servertypen/Umgebungen), meldet `health()` `degraded` mit `reason: catalog_not_loaded`. Die Kataloge definieren:
 
 - **`hardware.yml`:** Verfügbare CPU-, RAM-, Storage- und Netzwerk-Optionen sowie Kombinationsregeln, die ungültige Konfigurationen ausschließen.
 - **`environments.yml`:** Umgebungsdefinitionen (z. B. `prod`, `staging`, `dev`) und die zugehörigen IT-Provider-Workflows für Bestellprozesse.

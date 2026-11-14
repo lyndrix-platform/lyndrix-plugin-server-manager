@@ -51,6 +51,25 @@ from core.api import get_logger
 log = get_logger("Plugin:ServerManager:Catalog")
 
 _DEFAULT_CATALOG_DIR = Path(__file__).parent.parent.parent / "catalog"
+# The operator's catalog/ directory is site-specific and deliberately not part
+# of the repository, so a freshly installed release has none. The annotated
+# reference catalog under examples/ IS shipped and serves as the built-in
+# default until the operator provides their own files.
+_BUNDLED_CATALOG_DIR = Path(__file__).parent.parent.parent / "examples"
+_CATALOG_FILES = ("hardware", "environments", "profiles", "products", "settings")
+_CATALOG_SUFFIXES = (".yml", ".yaml", ".json")
+
+
+def has_catalog_files(directory: Path) -> bool:
+    """True when ``directory`` holds at least one catalog file."""
+    try:
+        return any(
+            (directory / f"{name}{suffix}").is_file()
+            for name in _CATALOG_FILES
+            for suffix in _CATALOG_SUFFIXES
+        )
+    except OSError:
+        return False
 
 # Catalog re-homing is restricted to directories inside the plugin install root
 # (where the shipped catalog/ and examples/ dirs live). This blocks both
@@ -68,6 +87,8 @@ def resolve_catalog_dir(raw: str | None) -> Path:
     """
     path = (raw or "").strip()
     if not path:
+        # May not exist in a release install — the loader then serves the
+        # bundled examples/ catalog (see CatalogLoader.effective_dir).
         return _DEFAULT_CATALOG_DIR.resolve()
     candidate = Path(path).resolve()
     if candidate != _CATALOG_ALLOWED_ROOT and _CATALOG_ALLOWED_ROOT not in candidate.parents:
@@ -1081,6 +1102,7 @@ class CatalogLoader:
         self._products: ProductCatalog | None = None
         self._engine: ConstraintEngine | None = None
         self._settings: SettingsCatalog | None = None
+        self._effective_dir: Path | None = None
 
     @property
     def catalog_dir(self) -> Path:
@@ -1090,6 +1112,40 @@ class CatalogLoader:
     def catalog_dir(self, path: Path | str) -> None:
         self._dir = Path(path)
         self.reload()
+
+    @property
+    def effective_dir(self) -> Path:
+        """The directory the files are really read from.
+
+        The configured directory wins as soon as it holds any catalog file. A
+        missing or empty one (the default ``catalog/`` of a release install, a
+        re-homed directory that was emptied) falls back to the bundled
+        ``examples/`` catalog as a whole — never file by file, so a partial
+        operator catalog is not silently mixed with example data.
+        """
+        if self._effective_dir is None:
+            if has_catalog_files(self._dir) or not has_catalog_files(_BUNDLED_CATALOG_DIR):
+                self._effective_dir = self._dir
+            else:
+                log.warning(
+                    f"Catalog: no catalog files in {self._dir} — using the bundled "
+                    f"example catalog {_BUNDLED_CATALOG_DIR}"
+                )
+                self._effective_dir = _BUNDLED_CATALOG_DIR
+        return self._effective_dir
+
+    @property
+    def using_bundled_fallback(self) -> bool:
+        """True when the configured directory is unusable and examples/ is served."""
+        return self.effective_dir.resolve() != self._dir.resolve()
+
+    def is_loaded(self) -> bool:
+        """True when the catalog can drive the add/validate workflows.
+
+        Without server types or environments the wizard has nothing to offer,
+        which is what an unreadable or absent catalog looks like.
+        """
+        return bool(self.hardware().get_server_types()) and bool(self.environments().get_all())
 
     def hardware(self) -> HardwareCatalog:
         if self._hardware is None:
@@ -1130,13 +1186,15 @@ class CatalogLoader:
         self._products = None
         self._engine = None
         self._settings = None
-        log.info(f"Catalog: reloaded from {self._dir}")
+        self._effective_dir = None
+        log.info(f"Catalog: reloaded from {self.effective_dir}")
 
     # ── Private ───────────────────────────────────────────────────────────────
 
     def _load(self, filename: str) -> dict:
-        for suffix in (".yml", ".yaml", ".json"):
-            path = self._dir / Path(filename).with_suffix(suffix)
+        base = self.effective_dir
+        for suffix in _CATALOG_SUFFIXES:
+            path = base / Path(filename).with_suffix(suffix)
             if path.exists():
                 try:
                     text = path.read_text(encoding="utf-8")
@@ -1146,5 +1204,5 @@ class CatalogLoader:
                 except Exception as exc:
                     log.error(f"Catalog: failed to load {path}: {exc}")
                     return {}
-        log.warning(f"Catalog: file not found: {self._dir / filename}")
+        log.warning(f"Catalog: file not found: {base / filename}")
         return {}
