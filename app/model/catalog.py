@@ -139,8 +139,43 @@ _SAFE_UNARY_OPS: dict[type, Callable[[Any], Any]] = {
 }
 
 
+# Resource caps (SM-06). The operand values come from the caller's hardware
+# profile (``/validate`` is an api:read route), so an allow-listed operator can
+# still be abused: ``'a' * 300000000`` allocates hundreds of MB.
+MAX_EXPR_LENGTH = 500
+MAX_EXPR_NODES = 100
+MAX_SEQUENCE_LENGTH = 10_000   # str / list produced by ``*`` or ``+``
+MAX_INT_BITS = 128             # int results (rules compare sizes, never big numbers)
+
+
 class _SafeExprError(ValueError):
     """Raised when a rule expression contains a disallowed construct."""
+
+
+def _is_seq(value: Any) -> bool:
+    return isinstance(value, (str, bytes, list, tuple))
+
+
+def _checked_binop(op_type: type, left: Any, right: Any) -> Any:
+    """Apply an allow-listed binary operator, refusing results that would blow
+    up memory: string/sequence repetition and concatenation beyond
+    ``MAX_SEQUENCE_LENGTH``, ``%`` formatting (``'%999999999d' % 1``) and ints
+    beyond ``MAX_INT_BITS`` bits."""
+    if op_type is ast.Mult and (_is_seq(left) or _is_seq(right)):
+        seq, count = (left, right) if _is_seq(left) else (right, left)
+        if _is_seq(count) or isinstance(count, bool) or not isinstance(count, int):
+            raise _SafeExprError("Sequence repetition needs an integer count")
+        if len(seq) * max(count, 0) > MAX_SEQUENCE_LENGTH:
+            raise _SafeExprError("Sequence repetition too large")
+    elif op_type is ast.Add and _is_seq(left) and _is_seq(right):
+        if len(left) + len(right) > MAX_SEQUENCE_LENGTH:
+            raise _SafeExprError("Sequence concatenation too large")
+    elif op_type is ast.Mod and isinstance(left, (str, bytes)):
+        raise _SafeExprError("String formatting is not allowed")
+    result = _SAFE_BIN_OPS[op_type](left, right)
+    if isinstance(result, int) and not isinstance(result, bool) and result.bit_length() > MAX_INT_BITS:
+        raise _SafeExprError("Integer result too large")
+    return result
 
 
 def _safe_eval_node(node: ast.AST, names: dict[str, Any]) -> Any:
@@ -158,8 +193,8 @@ def _safe_eval_node(node: ast.AST, names: dict[str, Any]) -> Any:
     if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_UNARY_OPS:
         return _SAFE_UNARY_OPS[type(node.op)](_safe_eval_node(node.operand, names))
     if isinstance(node, ast.BinOp) and type(node.op) in _SAFE_BIN_OPS:
-        return _SAFE_BIN_OPS[type(node.op)](
-            _safe_eval_node(node.left, names), _safe_eval_node(node.right, names)
+        return _checked_binop(
+            type(node.op), _safe_eval_node(node.left, names), _safe_eval_node(node.right, names)
         )
     if isinstance(node, ast.Compare):
         left = _safe_eval_node(node.left, names)
@@ -185,8 +220,15 @@ def _safe_eval_node(node: ast.AST, names: dict[str, Any]) -> Any:
 
 
 def safe_eval_bool(expr: str, names: dict[str, Any]) -> bool:
-    """Evaluate a boolean combination-rule expression in a hardened AST sandbox."""
+    """Evaluate a boolean combination-rule expression in a hardened AST sandbox.
+
+    Length and node count are capped before evaluation, results by
+    ``_checked_binop``; anything over a cap raises ``_SafeExprError``."""
+    if len(expr) > MAX_EXPR_LENGTH:
+        raise _SafeExprError(f"Expression longer than {MAX_EXPR_LENGTH} characters")
     tree = ast.parse(expr, mode="eval")
+    if sum(1 for _ in ast.walk(tree)) > MAX_EXPR_NODES:
+        raise _SafeExprError(f"Expression has more than {MAX_EXPR_NODES} nodes")
     return bool(_safe_eval_node(tree, names))
 
 
@@ -290,24 +332,24 @@ class HardwareCatalog:
         return opts
 
     def _eval_expr(self, expr: str, profile: dict) -> bool:
-        ctx: dict[str, Any] = dict(profile)
-        cpu_id = profile.get("cpu_id")
-        ctx["cpu"] = self.get_item(cpu_id) if cpu_id else {}
-        ram_modules: list[dict] = profile.get("ram_modules") or []
-        ctx["ram_count"] = sum(m.get("count", 1) for m in ram_modules)
-        # Prefer direct ram_gb (new format), fall back to module sum (legacy)
-        ctx["ram_total_gb"] = int(profile.get("ram_gb") or 0) or sum(
-            ((self.get_item(m.get("module_id")) or {}).get("size_gb") or 0) * m.get("count", 1)
-            for m in ram_modules
-        )
-        storage_disks: list[dict] = profile.get("storage_disks") or []
-        ctx["storage_count"] = len(storage_disks)
-        ctx["storage_total_gb"] = sum(
-            (int(d.get("size_gb") or 0) or ((self.get_item(d.get("disk_id") or "") or {}).get("size_gb") or 0))
-            * int(d.get("count", 1))
-            for d in storage_disks
-        ) or int(profile.get("storage_gb") or 0)
         try:
+            ctx: dict[str, Any] = dict(profile)
+            cpu_id = profile.get("cpu_id")
+            ctx["cpu"] = self.get_item(cpu_id) if cpu_id else {}
+            ram_modules: list[dict] = profile.get("ram_modules") or []
+            ctx["ram_count"] = sum(m.get("count", 1) for m in ram_modules)
+            # Prefer direct ram_gb (new format), fall back to module sum (legacy)
+            ctx["ram_total_gb"] = int(profile.get("ram_gb") or 0) or sum(
+                ((self.get_item(m.get("module_id")) or {}).get("size_gb") or 0) * m.get("count", 1)
+                for m in ram_modules
+            )
+            storage_disks: list[dict] = profile.get("storage_disks") or []
+            ctx["storage_count"] = len(storage_disks)
+            ctx["storage_total_gb"] = sum(
+                (int(d.get("size_gb") or 0) or ((self.get_item(d.get("disk_id") or "") or {}).get("size_gb") or 0))
+                * int(d.get("count", 1))
+                for d in storage_disks
+            ) or int(profile.get("storage_gb") or 0)
             return safe_eval_bool(expr, ctx)
         except _SafeExprError as exc:
             log.warning(f"Catalog: rejected unsafe rule expression '{expr}': {exc}")
