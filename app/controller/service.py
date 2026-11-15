@@ -325,6 +325,11 @@ class ServerManagerService:
                 k: data[k] for k in _UPDATABLE_FIELDS
                 if k in data and data[k] != old.get(k)
             }
+            if from_source and not requested.get("ci_id", True):
+                # SM-04: a push without a CI id means "the registry did not
+                # answer", not "no CI". Only an explicit different id replaces
+                # the stored one (users clear it via the UI, not a source).
+                requested.pop("ci_id")
             for field, value in requested.items():
                 setattr(record, field, value)
             if from_source:
