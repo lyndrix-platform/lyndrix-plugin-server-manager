@@ -563,3 +563,91 @@ def test_write_side_purge_uses_the_injected_clock(svc):
     svc.apply_override_ended({"override_id": "other", "source": "x"})
     with mnt.get_session() as s:
         assert s.query(mnt.MaintenanceRecord).filter_by(override_id="deploy-1").count() == 0
+
+
+# ── SM-05: out-of-order override events (same contract as the Entity Registry) ──
+
+
+def _override_rows(override_id: str):
+    from sqlalchemy import select
+
+    from app.model.database import get_session
+    from app.model.models import MaintenanceRecord
+
+    with get_session() as s:
+        return s.execute(
+            select(MaintenanceRecord).where(MaintenanceRecord.override_id == override_id)
+        ).scalars().all()
+
+
+def test_override_ended_before_started_does_not_activate(svc):
+    ended = NOW - timedelta(minutes=2)
+    end = {"override_id": "job-9", "source": "iac-orchestrator", "ended_at": _iso(ended),
+           "linger_minutes": 15}
+    assert svc.apply_override_ended(end) == 0  # unknown id → remembered
+    # Re-delivered "ended" with another time: the first one stays.
+    svc.apply_override_ended({**end, "ended_at": _iso(NOW)})
+
+    svc.apply_override_started(
+        _started("job-9", [CI_A], until=NOW + timedelta(hours=6), started=NOW - timedelta(minutes=10)))
+    st = svc.maintenance_for([CI_A], now=NOW)[CI_A]
+    # Same end state as in-order delivery: lingers until ended + 15 min, not until `until`.
+    assert st["active"] is True and st["until"] == _iso(ended + timedelta(minutes=15))
+    assert svc.maintenance_for([CI_A], now=NOW + timedelta(minutes=14))[CI_A]["active"] is False
+
+    (row,) = _override_rows("job-9")
+    until_before = row.until
+    # No "ended" ever moves `until` or the first ended_at.
+    svc.apply_override_ended({**end, "ended_at": _iso(NOW + timedelta(minutes=30))})
+    (row,) = _override_rows("job-9")
+    assert row.until == until_before and row.ended_at == ended.replace(tzinfo=None)
+
+
+def test_redelivered_ended_does_not_extend_the_linger(svc):
+    svc.apply_override_started(
+        _started("job-8", [CI_A], until=NOW + timedelta(hours=4), started=NOW - timedelta(minutes=30)))
+    end = {"override_id": "job-8", "source": "iac-orchestrator", "ended_at": _iso(NOW),
+           "linger_minutes": 15}
+    assert svc.apply_override_ended(end) == 1
+    assert svc.apply_override_ended({**end, "ended_at": _iso(NOW + timedelta(minutes=20))}) == 0
+    st = svc.maintenance_for([CI_A], now=NOW + timedelta(minutes=16))[CI_A]
+    assert st["active"] is False  # not extended to +35 min
+
+
+def test_override_tombstone_expires_with_the_linger(svc):
+    svc.apply_override_ended({"override_id": "job-10", "source": "iac-orchestrator",
+                              "ended_at": _iso(NOW), "linger_minutes": 15})
+    # Another emitter's override with the same id is not suppressed …
+    svc.apply_override_started(
+        _started("job-10", [CI_A], until=NOW + timedelta(hours=4), started=NOW, source="monitoring"))
+    assert svc.maintenance_for([CI_A], now=NOW + timedelta(minutes=30))[CI_A]["active"] is True
+    # … and after the linger period the id counts as a new override.
+    later = NOW + timedelta(minutes=16)
+    svc.maintenance.clock = lambda: later
+    svc.apply_override_started(
+        _started("job-10", [CI_A], until=later + timedelta(hours=4), started=later))
+    st = svc.maintenance_for([CI_A], now=later)[CI_A]
+    assert {o["source"] for o in st["overrides"]} == {"iac-orchestrator", "monitoring"}
+    assert st["until"] == _iso(later + timedelta(hours=4))
+
+
+def test_sourceless_end_tombstone_and_late_commit(svc):
+    """The "ended" commits its tombstone after the "started" read but before its
+    commit: the re-check after the commit closes the freshly stored rows."""
+    store = svc.maintenance
+    store.clock = lambda: NOW
+    real = store._apply_tombstone
+
+    def _ended_overtakes(source, override_id, now):
+        # runs right after the "started" commit; the source-less end lands now
+        store._apply_tombstone = real
+        store.apply_override_ended({"override_id": "job-11", "ended_at": _iso(NOW)})
+        return real(source, override_id, now)
+
+    store._apply_tombstone = _ended_overtakes
+    try:
+        svc.apply_override_started(
+            _started("job-11", [CI_A], until=NOW + timedelta(hours=4), started=NOW))
+    finally:
+        store._apply_tombstone = real
+    assert svc.maintenance_for([CI_A], now=NOW + timedelta(minutes=16))[CI_A]["active"] is False

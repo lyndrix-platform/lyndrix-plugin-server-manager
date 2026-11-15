@@ -137,3 +137,28 @@ class MaintenanceRecord(_Base):
     linger_minutes = Column(Integer, nullable=True)
     reason = Column(Text, nullable=True)
     updated_at = Column(DateTime, nullable=False, default=func.now(), onupdate=func.now())
+
+
+class MaintenanceTombstone(_Base):
+    """An ``override_ended`` for an override no row exists for (yet).
+
+    Bus events are handled as concurrent tasks, so a quick deploy's "ended" can
+    be committed before its "started" (also: re-delivery, an emitter on another
+    instance). The tombstone carries the end time until ``expires_at``
+    (= ``ended_at`` + linger); a "started" for the same ``(source, override_id)``
+    arriving in that time is stored already ended. ``source`` is ``""`` when the
+    "ended" named no source (matches any). Same contract as the Entity Registry.
+    """
+
+    __tablename__ = "server_manager_maintenance_tombstones"
+    __table_args__ = (
+        UniqueConstraint("source", "override_id", name="uq_server_manager_maint_tombstone"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source = Column(String(64), nullable=False, default="")
+    override_id = Column(String(128), nullable=False)
+    ended_at = Column(DateTime, nullable=False)
+    linger_minutes = Column(Integer, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=func.now())
