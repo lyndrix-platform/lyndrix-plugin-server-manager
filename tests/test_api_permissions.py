@@ -203,3 +203,58 @@ def test_nicegui_page_is_gated_on_write_permission():
     source = (Path(__file__).resolve().parents[1] / "entrypoint.py").read_text()
     assert 'main_layout("Server Manager", permission=PERM_WRITE)' in source
     assert "@page_layout" in source and '@main_layout("Server Manager")' not in source
+
+
+# ── The internal bus path is not behind the REST ingest permission ────────────
+# New servers reach the plugin through the bus today (IaC orchestrator, entity
+# registry); the REST ingest is unused. The ``server_manager:ingest`` gate must
+# therefore never apply to ``server_manager:register_server``.
+
+class _SetupCtx(_FakeCtx):
+    """Just enough of ModuleContext for ``setup()``: records the subscriptions."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.handlers: dict = {}
+        self.log = SimpleNamespace(
+            info=lambda *a, **k: None, warning=lambda *a, **k: None,
+            error=lambda *a, **k: None, debug=lambda *a, **k: None,
+        )
+
+    def register_routes(self, router) -> None:
+        self.router = router
+
+    def subscribe(self, topic):
+        def _decorator(fn):
+            self.handlers[topic] = fn
+            return fn
+        return _decorator
+
+    def create_task(self, coro, name=None):
+        coro.close()  # the bootstrap is done by the ``svc`` fixture already
+
+
+def test_bus_registration_needs_no_ingest_permission(svc, plugin_entrypoint, monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(plugin_entrypoint, "svc", svc)
+    ctx = _SetupCtx()
+    plugin_entrypoint.setup(ctx)
+    assert ctx.router is not None  # setup wired the REST side too
+
+    # The payload the IaC orchestrator emits (engine._register_servers) — a bus
+    # event carries no user, API key or permission at all.
+    payload = {**_IAC, "hostname": "docker-atlas.int.example", "status": "active",
+               "writeback": False, "tags": ["docker"],
+               "notes": "Managed by the IaC orchestrator (SSoT)."}
+    asyncio.run(ctx.handlers["server_manager:register_server"](payload))
+
+    failed = [p for t, p in ctx.events if t == "server_manager:ingest_failed"]
+    assert failed == []
+    assert svc.count_servers() == 1
+
+    # ... and the same source can withdraw it again, also without a permission.
+    asyncio.run(ctx.handlers["server_manager:deregister_server"](
+        {"source": "iac-orchestrator", "external_id": "docker-atlas"}))
+    assert [p for t, p in ctx.events if t == "server_manager:ingest_failed"] == []
+    assert svc.count_servers() == 0
