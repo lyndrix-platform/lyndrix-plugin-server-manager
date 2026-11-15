@@ -193,3 +193,13 @@ def test_manifest_declares_the_permissions_for_admins_only(plugin_entrypoint):
         if role_id != "admin":
             assert ADMIN not in role.permissions
             assert role.auto_map_groups == []  # nothing new reaches INT_USER/INT_VIEWER
+
+
+def test_nicegui_page_is_gated_on_write_permission():
+    """SM-02: the NiceGUI page edits/deletes servers without own checks, so the
+    page itself must be gated (main_layout(permission=...))."""
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "entrypoint.py").read_text()
+    assert 'main_layout("Server Manager", permission=PERM_WRITE)' in source
+    assert "@page_layout" in source and '@main_layout("Server Manager")' not in source

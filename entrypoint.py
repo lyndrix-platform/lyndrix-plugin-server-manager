@@ -78,12 +78,12 @@ from core.api import ModuleManifest, PluginHealthStatus, db_instance
 try:
     from ui.layout import main_layout
 except ImportError:
-    def main_layout(title):
+    def main_layout(title, **_kwargs):
         def _d(fn):
             return fn
         return _d
 
-from .app.api import ExternalServerPayload, build_plugin_router
+from .app.api import PERM_WRITE, ExternalServerPayload, build_plugin_router
 from .app.controller.service import server_manager_service as svc
 from .app.ui.settings import render_settings_ui as _render_settings_ui
 from .app.ui.widget import render_dashboard_widget as _render_widget
@@ -421,8 +421,19 @@ def setup(ctx):
             "maintenance:override_ended", payload, svc.apply_override_ended
         )
 
+    # SM-02: this page lists AND edits/deletes servers and the UI code has no
+    # permission checks of its own (core.api offers plugins no session
+    # permission helper), so the page needs api:write — the lowest permission
+    # that may use every action on it. Read-only users use the React UI.
+    # TODO(agent): gate per action and open the page read-only to viewers once
+    # core.api exposes a session permission check (CORE).
+    try:
+        page_layout = main_layout("Server Manager", permission=PERM_WRITE)
+    except TypeError:  # older core: main_layout has no ``permission`` argument
+        page_layout = main_layout("Server Manager")
+
     @ui.page("/server-manager")
-    @main_layout("Server Manager")
+    @page_layout
     async def _server_manager_page():
         render_server_manager_page(ctx)
 
