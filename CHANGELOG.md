@@ -5,8 +5,8 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-Proposed version: **1.5.0** (security audit 2026-11; the manifest version is not bumped yet). Minimum core unchanged.
+## [1.5.0] - 2026-11-15
+Security audit 2026-11. Minimum core unchanged.
 React bundle rebuild needed (`can_manage` flag in the settings view).
 **Before the rollout:** a service account that pushes records over REST needs the new `server_manager:ingest`
 permission (role `source`) and may only act as the source named like its account; the system key and admins may act
