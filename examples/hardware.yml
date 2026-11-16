@@ -25,6 +25,7 @@ cpu_options:
     base_ghz: 2.1
     tdp_w: 120
     socket: LGA4189
+    server_model: "Generic 2U Rack Server"
     compatible_types: [physical]
 
   - id: virtual-vcpu

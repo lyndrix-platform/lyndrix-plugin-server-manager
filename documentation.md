@@ -67,6 +67,8 @@ Andere Systeme (IaC-Orchestrator, CMDB, Skripte) können Server per API oder Eve
   - `writeback: false` (Standard): Der Server ist in beiden UIs und über die normale API **schreibgeschützt** (🔒, `PATCH`/`DELETE` → `409`). Nur die Quelle selbst ändert ihn über den Ingest-Pfad.
   - `writeback: true`: Der Server ist editierbar. Eine Änderung wird lokal sofort übernommen, als `sync_state = pending` markiert und als `server_manager:writeback_requested` an die Quelle gemeldet (z. B. Commit ins IaC-Repository durch das IaC-Plugin). Der nächste Push der Quelle setzt den Server wieder auf „synchron“; meldet die Quelle `server_manager:writeback_failed`, zeigt die UI den Fehler an.
   - Die Quelle bleibt die Wahrheit: Was sie nicht übernimmt, überschreibt ihr nächster Push.
+- **Berechtigung (REST):** Die Ingest-Routen verlangen die eigene Berechtigung `plugin:lyndrix.plugin.server_manager:server_manager:ingest` (Rolle „Server Manager Source System“ bzw. Administrator) — `api:write` genügt nicht, weil der Core dieses Recht jedem normalen Benutzer gibt. Die `source` ist nicht frei wählbar: ein Aufrufer darf nur als die Quelle liefern, die so heißt wie sein Konto (Service-Account/API-Key des Sync-Jobs, z. B. Benutzer `cmdb` → `source` `cmdb`), sonst `403`. Nur der System-API-Key und Inhaber von `…:server_manager:admin` dürfen für beliebige Quellen handeln. Damit kann niemand über REST einen fremden, schreibgeschützten Datensatz per `writeback: true` editierbar machen, seine `ci_id` umhängen oder ihn löschen. Der Event-Bus-Pfad (`register_server`) ist unverändert.
+- Katalog neu laden / Katalogpfad setzen (`POST /catalog/reload`, `POST /catalog/path`) verlangt `…:server_manager:admin`; `GET /catalog` liefert dazu `can_manage`.
 - Es gibt kein automatisches Aufräumen: Server, die ein Fremdsystem nicht mehr liefert, müssen explizit per `DELETE` bzw. `deregister_server` entfernt werden.
 
 ```bash
@@ -183,7 +185,7 @@ Das Badge nutzt die Shell-Klasse `lx-badge--maintenance` (Token `--lx-state-main
 
 ## Konfiguration & Katalog
 
-Die Hardware- und Umgebungskataloge werden aus YAML-Dateien im `examples/`-Verzeichnis geladen. Sie definieren:
+Die Hardware- und Umgebungskataloge werden aus YAML-Dateien im Katalogverzeichnis geladen (Standard `catalog/` im Plugin-Verzeichnis, umstellbar in den Einstellungen). Das Verzeichnis `catalog/` ist standortspezifisch und nicht Teil des Repositories: fehlt es oder enthält es keine Katalogdateien, lädt das Plugin als Ganzes den mitgelieferten Beispielkatalog aus `examples/` (`bundled_fallback: true` in `GET /catalog` und in den Health-Details). Enthält das Verzeichnis Dateien, aber keinen nutzbaren Katalog (keine Servertypen/Umgebungen), meldet `health()` `degraded` mit `reason: catalog_not_loaded`. Die Kataloge definieren:
 
 - **`hardware.yml`:** Verfügbare CPU-, RAM-, Storage- und Netzwerk-Optionen sowie Kombinationsregeln, die ungültige Konfigurationen ausschließen.
 - **`environments.yml`:** Umgebungsdefinitionen (z. B. `prod`, `staging`, `dev`) und die zugehörigen IT-Provider-Workflows für Bestellprozesse.

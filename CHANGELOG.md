@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-11-15
+Security audit 2026-11. Minimum core unchanged.
+React bundle rebuild needed (`can_manage` flag in the settings view).
+**Before the rollout:** a service account that pushes records over REST needs the new `server_manager:ingest`
+permission (role `source`) and may only act as the source named like its account; the system key and admins may act
+for any source. The bus ingest `server_manager:register_server` is unchanged.
+
+### Security
+- New custom permissions `server_manager:ingest` and `server_manager:admin` (admin role; new unmapped role `source`
+  for service accounts). `PUT`/`DELETE /servers/external/...` and `POST /servers/import` require the ingest permission
+  and the source is bound to the caller; `POST /catalog/reload` and `/catalog/path` require the admin permission.
+  `GET /catalog` carries `can_manage` (SM-03).
+- The rule evaluator is bounded: sequence repetition and concatenation up to 10 000 elements, no `%` formatting on
+  strings, integer results up to 128 bits, expressions up to 500 characters and 100 AST nodes. A malformed profile no
+  longer raises HTTP 500 in validate (SM-06).
+- The NiceGUI `/server-manager` page requires `api:write`; read-only access stays with the React UI (SM-02).
+
+### Fixed
+- An installed release without a site catalog serves the bundled `examples/` catalog as a whole instead of an empty
+  one, and `health()` reports degraded `catalog_not_loaded` when no server types or environments are loaded.
+  `GET /catalog` gains `bundled_fallback` and `effective_dir` (SM-01).
+- A push with `ci_id` null or empty never clears a stored CI id; only a different explicit id replaces it (SM-04).
+- A `maintenance:override_ended` that arrives before its `override_started` is stored as a tombstone (new table
+  `server_manager_maintenance_tombstones`) and the late start is stored as already ended; a re-delivered end no longer
+  overwrites `ended_at`. Same contract as the entity registry (SM-05).
+- The six tests that failed on the 1.4.0 tree pass: four needed a catalog (see SM-01), two were date bombs (the
+  maintenance read-model now runs on an injectable clock).
+
 ## [1.4.0] - 2026-10-18
 ### Added
 - **Maintenance badge (core API ≥ 1.13 contract, consumer side).** The plugin

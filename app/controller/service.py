@@ -191,6 +191,15 @@ class ServerManagerService:
             self.catalog.reload()
         return target
 
+    def catalog_status(self) -> dict:
+        """Truthful catalog state for ``health()`` (cached parse; first call reads files)."""
+        cat = self.catalog
+        return {
+            "loaded": cat.is_loaded(),
+            "dir": str(cat.effective_dir),
+            "bundled_fallback": cat.using_bundled_fallback,
+        }
+
     def _emit_catalog_changed(self, action: str) -> None:
         self._emit(
             "server_manager:catalog_changed",
@@ -316,6 +325,11 @@ class ServerManagerService:
                 k: data[k] for k in _UPDATABLE_FIELDS
                 if k in data and data[k] != old.get(k)
             }
+            if from_source and not requested.get("ci_id", True):
+                # SM-04: a push without a CI id means "the registry did not
+                # answer", not "no CI". Only an explicit different id replaces
+                # the stored one (users clear it via the UI, not a source).
+                requested.pop("ci_id")
             for field, value in requested.items():
                 setattr(record, field, value)
             if from_source:

@@ -49,3 +49,12 @@ profiles:
         applies_to_types: [vm, container]
         max_count: 1
         severity: error
+      # OS-specific storage limits only apply once the server's os_type is known
+      # (derived from the chosen OS family, see products.yml → os_variants).
+      - id: fce_windows_storage
+        type: os_storage_limit
+        description: "Windows: the storage product splits into max 4 partitions (drive letters), max 8 TB total."
+        applies_to_os: [windows]
+        max_total_gb: 8192
+        max_partitions: 4
+        severity: error

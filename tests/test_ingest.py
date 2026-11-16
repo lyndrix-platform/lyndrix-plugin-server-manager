@@ -222,3 +222,17 @@ def test_manual_servers_stay_editable_without_writeback_events(svc):
     assert manual["read_only"] is False
     svc.update_server(manual["id"], {"notes": "x"})
     assert "server_manager:writeback_requested" not in svc._ctx.topics()
+
+
+def test_push_with_null_ci_id_keeps_the_stored_id(svc):
+    """SM-04: the orchestrator sends ci_id=None whenever the registry did not
+    answer; that must not erase the link."""
+    svc.upsert_external_server({**_BASE, "ci_id": "11111111-1111-1111-1111-111111111111"})
+    for unknown in (None, ""):
+        out, _ = svc.upsert_external_server(
+            {"source": "iac-orchestrator", "external_id": "docker-atlas", "ci_id": unknown})
+        assert out["ci_id"] == "11111111-1111-1111-1111-111111111111"
+    out, _ = svc.upsert_external_server(
+        {"source": "iac-orchestrator", "external_id": "docker-atlas",
+         "ci_id": "22222222-2222-2222-2222-222222222222"})
+    assert out["ci_id"] == "22222222-2222-2222-2222-222222222222"

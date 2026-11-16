@@ -26,6 +26,32 @@ server_products:
           - id: WIN2022
             label: Windows Server 2022
             lifecycle: preferred
+      # os_type is the global token (settings.yml → os_types) that profile rules
+      # filter on via applies_to_os; every OS family must declare one.
+      - id: RHEL
+        os_type: linux
+        label: Red Hat Enterprise Linux
+        icon: terminal
+        os_versions:
+          - id: rhel9
+            label: RHEL 9.x
+            lifecycle: preferred
+      - id: CRHEL
+        os_type: linux
+        label: Container-RHEL
+        icon: view_in_ar
+        os_versions:
+          - id: crhel9
+            label: Container-RHEL 9.x
+            lifecycle: preferred
+      - id: SOL
+        os_type: unix
+        label: Solaris
+        icon: memory
+        os_versions:
+          - id: sol11
+            label: Solaris 11
+            lifecycle: supported
     resources:
       form_factor: virtual
       ram_step_gb: 2

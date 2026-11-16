@@ -47,7 +47,9 @@ Events consumed (push servers in from any other plugin)
   here, True lets users edit it and routes the edit back to the source.
   The emitting plugin must list these topics in its own permissions.emit.
   REST equivalent: PUT/DELETE /servers/external/{source}/{external_id},
-  POST /servers/import (batch).
+  POST /servers/import (batch) — these need the custom permission
+  server_manager:ingest and the source must be named like the calling account
+  (any source with server_manager:admin / the system key).
 
 Maintenance windows consumed (core API >= 1.13 contract, read-model only)
 -------------------------------------------------------------------------
@@ -76,12 +78,12 @@ from core.api import ModuleManifest, PluginHealthStatus, db_instance
 try:
     from ui.layout import main_layout
 except ImportError:
-    def main_layout(title):
+    def main_layout(title, **_kwargs):
         def _d(fn):
             return fn
         return _d
 
-from .app.api import ExternalServerPayload, build_plugin_router
+from .app.api import PERM_WRITE, ExternalServerPayload, build_plugin_router
 from .app.controller.service import server_manager_service as svc
 from .app.ui.settings import render_settings_ui as _render_settings_ui
 from .app.ui.widget import render_dashboard_widget as _render_widget
@@ -92,7 +94,7 @@ from .app.ui.page import render_server_manager_page
 manifest = ModuleManifest(
     id="lyndrix.plugin.server_manager",
     name="Server Manager",
-    version="1.4.0",
+    version="1.5.0",
     description=(
         "Central server inventory with configurable hardware catalogs, "
         "combination rules, and event-bus hooks for downstream order workflows."
@@ -155,12 +157,32 @@ manifest = ModuleManifest(
     # Identity & Permissions 2.0: roles use fully-qualified per-plugin
     # permissions (plugin:<id>:api:*) rather than the bare api:read/write,
     # so granting a role here can never leak into a global cross-plugin grant.
+    # Operator-level actions. The core's baseline grants hand api:write to every
+    # INT_USER, so these are separate permissions that only the admin role (and
+    # roles an operator assigns deliberately) carry.
+    custom_permissions=[
+        {"id": "server_manager:admin", "label": "Server Manager Administration",
+         "description": "Re-home and reload the catalog; ingest servers on behalf of any source",
+         "icon": "admin_panel_settings"},
+        {"id": "server_manager:ingest", "label": "Server Manager Ingest",
+         "description": "Push servers in over the REST ingest routes as the source "
+                        "named like the calling account",
+         "icon": "input"},
+    ],
     roles=[
         {"id": "admin", "label": "Server Manager Administrator",
          "permissions": ["plugin:lyndrix.plugin.server_manager:api:read",
-                          "plugin:lyndrix.plugin.server_manager:api:write"],
+                          "plugin:lyndrix.plugin.server_manager:api:write",
+                          "plugin:lyndrix.plugin.server_manager:server_manager:admin",
+                          "plugin:lyndrix.plugin.server_manager:server_manager:ingest"],
          "auto_map_groups": ["INT_ADMIN"],
          "description": "Full control over server inventory and catalog configuration."},
+        {"id": "source", "label": "Server Manager Source System",
+         "permissions": ["plugin:lyndrix.plugin.server_manager:api:read",
+                          "plugin:lyndrix.plugin.server_manager:server_manager:ingest"],
+         "auto_map_groups": [],
+         "description": "Service account of a system that pushes its servers in "
+                        "(REST ingest as the source named like the account)."},
         {"id": "operator", "label": "Server Manager Operator",
          "permissions": ["plugin:lyndrix.plugin.server_manager:api:read",
                           "plugin:lyndrix.plugin.server_manager:api:write"],
@@ -219,19 +241,33 @@ async def health(ctx) -> PluginHealthStatus:
         )
 
     latency = round((time.perf_counter() - start) * 1000, 1)
-    catalog_loaded = bool(getattr(svc, "catalog", None))
+    try:
+        catalog = await asyncio.to_thread(svc.catalog_status)
+    except Exception as exc:  # unreadable catalog must not turn the probe into an error
+        catalog = {"loaded": False, "dir": None, "bundled_fallback": False, "error": str(exc)}
     details = {
         "db_connected": True,
         "ready": True,
         "servers": servers,
-        "catalog_loaded": catalog_loaded,
+        "catalog_loaded": catalog["loaded"],
+        "catalog_dir": catalog["dir"],
+        "catalog_bundled_fallback": catalog["bundled_fallback"],
     }
-    # DB works but the hardware catalog never loaded → CRUD reads work, but the
-    # guided add/validate workflows are broken. Usable-but-impaired = degraded.
-    if not catalog_loaded:
+    # DB works but no usable hardware catalog → CRUD reads work, but the guided
+    # add/validate workflows are broken. Usable-but-impaired = degraded.
+    if not catalog["loaded"]:
         return PluginHealthStatus(
             status="degraded",
-            details={**details, "reason": "catalog_not_loaded"},
+            details={
+                **details,
+                "reason": "catalog_not_loaded",
+                "message": (
+                    "No usable catalog (server types / environments) in "
+                    f"{catalog['dir'] or 'the catalog directory'} — add the catalog "
+                    "files or reset the catalog path in the plugin settings."
+                ),
+                **({"error": catalog["error"]} if catalog.get("error") else {}),
+            },
             latency_ms=latency,
         )
     return PluginHealthStatus(status="ok", details=details, latency_ms=latency)
@@ -385,8 +421,19 @@ def setup(ctx):
             "maintenance:override_ended", payload, svc.apply_override_ended
         )
 
+    # SM-02: this page lists AND edits/deletes servers and the UI code has no
+    # permission checks of its own (core.api offers plugins no session
+    # permission helper), so the page needs api:write — the lowest permission
+    # that may use every action on it. Read-only users use the React UI.
+    # TODO(agent): gate per action and open the page read-only to viewers once
+    # core.api exposes a session permission check (CORE).
+    try:
+        page_layout = main_layout("Server Manager", permission=PERM_WRITE)
+    except TypeError:  # older core: main_layout has no ``permission`` argument
+        page_layout = main_layout("Server Manager")
+
     @ui.page("/server-manager")
-    @main_layout("Server Manager")
+    @page_layout
     async def _server_manager_page():
         render_server_manager_page(ctx)
 

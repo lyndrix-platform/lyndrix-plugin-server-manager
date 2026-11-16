@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Iterator, Mapping, Sequence, TypeVar
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TypeVar
 
 from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -49,6 +49,7 @@ from ..model.models import (
     MAINT_KIND_WINDOW,
     MAINT_NO_OVERRIDE,
     MaintenanceRecord,
+    MaintenanceTombstone,
 )
 
 log = get_logger("Plugin:ServerManager:Maintenance")
@@ -239,8 +240,12 @@ def _override_id(payload: Mapping[str, Any], topic: str) -> str:
     return override_id
 
 
-def parse_override_started(payload: Mapping[str, Any]) -> dict:
-    """``maintenance:override_started`` → normalised dict (aware UTC datetimes)."""
+def parse_override_started(
+    payload: Mapping[str, Any], now: datetime | None = None
+) -> dict:
+    """``maintenance:override_started`` → normalised dict (aware UTC datetimes).
+
+    ``now`` is the processing time used for a missing ``started_at``."""
     override_id = _override_id(payload, "override_started")
     raw_ids = payload.get("ci_ids")
     if raw_ids is None:
@@ -261,7 +266,9 @@ def parse_override_started(payload: Mapping[str, Any]) -> dict:
     until = _parse_iso(payload.get("until"), "until")
     started_raw = payload.get("started_at")
     started_at = (
-        _parse_iso(started_raw, "started_at") if started_raw is not None else utcnow()
+        _parse_iso(started_raw, "started_at")
+        if started_raw is not None
+        else (now or utcnow())
     )
     reason = payload.get("reason")
     return {
@@ -277,7 +284,9 @@ def parse_override_started(payload: Mapping[str, Any]) -> dict:
     }
 
 
-def parse_override_ended(payload: Mapping[str, Any]) -> dict:
+def parse_override_ended(
+    payload: Mapping[str, Any], now: datetime | None = None
+) -> dict:
     """``maintenance:override_ended`` → normalised dict (``ended_at`` missing = now)."""
     override_id = _override_id(payload, "override_ended")
     ended_raw = payload.get("ended_at")
@@ -286,7 +295,9 @@ def parse_override_ended(payload: Mapping[str, Any]) -> dict:
         "override_id": override_id,
         "source": str(source)[:_SOURCE_MAX] if source else None,
         "ended_at": (
-            _parse_iso(ended_raw, "ended_at") if ended_raw is not None else utcnow()
+            _parse_iso(ended_raw, "ended_at")
+            if ended_raw is not None
+            else (now or utcnow())
         ),
         "linger_minutes": _as_int(
             payload.get("linger_minutes"), "linger_minutes", None
@@ -421,8 +432,16 @@ class MaintenanceStore:
     short READ COMMITTED transaction each and retry on MariaDB 1020/1205/1213.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, clock: Callable[[], datetime] | None = None) -> None:
+        # Every "what time is it" of the store goes through this clock (default
+        # values of missing timestamps, the expiry purge, read-time evaluation
+        # without an explicit ``now``), so tests can pin it instead of racing
+        # the wall clock.
+        self.clock: Callable[[], datetime] = clock or utcnow
         self._last_purge: float | None = None
+
+    def _now(self) -> datetime:
+        return _aware(self.clock()) or utcnow()
 
     # ── Writers ──
 
@@ -472,9 +491,57 @@ class MaintenanceStore:
             "skipped": skipped,
         }
 
+    # Out-of-order contract (identical to the Entity Registry's):
+    #   1. An override is identified by (source, override_id).
+    #   2. An "ended" for an override without stored rows is remembered as a
+    #      tombstone (its ended_at, kept until ended_at + linger).
+    #   3. A "started" arriving while the tombstone lives is stored already
+    #      ended with the tombstone's ended_at — the end state equals in-order
+    #      delivery. After the tombstone expired it is a new override.
+    #   4. A re-delivered "ended" is a no-op: the first ended_at wins and no
+    #      "ended" ever touches `until`.
+    #   5. A re-delivered "started" never revives an ended override.
+
+    @staticmethod
+    def _live_tombstone(s, source: str | None, override_id: str, now: datetime):
+        """The unexpired tombstone for this override, if any. A tombstone from a
+        source-less "ended" (``source == ""``) matches any source."""
+        stmt = select(MaintenanceTombstone).where(
+            MaintenanceTombstone.override_id == override_id,
+            MaintenanceTombstone.expires_at > _to_db(now),
+        )
+        if source is not None:
+            stmt = stmt.where(MaintenanceTombstone.source.in_(sorted({source, ""})))
+        return s.execute(stmt.order_by(MaintenanceTombstone.ended_at)).scalars().first()
+
+    def _apply_tombstone(self, source: str | None, override_id: str, now: datetime) -> int:
+        """End every still-open row of an override a live tombstone exists for."""
+
+        def _tx() -> int:
+            with get_session() as s:
+                tomb = self._live_tombstone(s, source, override_id, now)
+                if tomb is None:
+                    return 0
+                query = select(MaintenanceRecord).where(
+                    MaintenanceRecord.kind == MAINT_KIND_OVERRIDE,
+                    MaintenanceRecord.override_id == override_id,
+                    MaintenanceRecord.ended_at.is_(None),
+                )
+                if tomb.source:
+                    query = query.where(MaintenanceRecord.source == tomb.source)
+                rows = s.execute(query).scalars().all()
+                for row in rows:
+                    row.ended_at = tomb.ended_at
+                    row.linger_minutes = tomb.linger_minutes
+                s.commit()
+                return len(rows)
+
+        return retry_write(_tx)
+
     def apply_override_started(self, payload: Mapping[str, Any]) -> int:
         """Upsert one override row per ``ci_id``; returns the number of rows touched."""
-        data = parse_override_started(payload)
+        now = self._now()
+        data = parse_override_started(payload, now)
         if not data["ci_ids"]:
             log.info(
                 f"Maintenance: override {data['override_id']} has no usable ci_ids — ignored"
@@ -493,8 +560,26 @@ class MaintenanceStore:
                         )
                     ).scalars()
                 }
+                # Already over? Either the "ended" overtook us (tombstone) or this
+                # is a re-delivery naming CIs the first "started" did not have —
+                # new rows are then born ended instead of becoming active.
+                ended_at, ended_linger = None, None
+                tomb = self._live_tombstone(s, data["source"], data["override_id"], now)
+                if tomb is not None:
+                    ended_at, ended_linger = tomb.ended_at, tomb.linger_minutes
+                else:
+                    done = next(
+                        (r for r in sorted(
+                            (r for r in existing.values() if r.ended_at is not None),
+                            key=lambda r: r.ended_at,
+                        )),
+                        None,
+                    )
+                    if done is not None:
+                        ended_at, ended_linger = done.ended_at, done.linger_minutes
                 for ci_id in data["ci_ids"]:
                     row = existing.get(ci_id)
+                    is_new = row is None
                     if row is None:
                         row = MaintenanceRecord(
                             ci_id=ci_id,
@@ -511,6 +596,9 @@ class MaintenanceStore:
                     # override: ended_at (and the linger it came with) stay.
                     if row.ended_at is None:
                         row.linger_minutes = data["linger_minutes"]
+                        if ended_at is not None and (is_new or tomb is not None):
+                            row.ended_at = ended_at
+                            row.linger_minutes = ended_linger
                 s.commit()
                 return len(data["ci_ids"])
 
@@ -520,6 +608,10 @@ class MaintenanceStore:
             # A peer inserted the same (ci_id, override_id) first; the second
             # pass finds the rows and takes the update path.
             touched = retry_write(_tx)
+        # The "ended" may have committed its tombstone between our read and our
+        # commit (both handlers run as concurrent tasks). Each side re-checks
+        # after its own commit, so at least one of them sees the other.
+        self._apply_tombstone(data["source"], data["override_id"], now)
         log.info(
             f"Maintenance: override {data['override_id']} ({data['source']}) started "
             f"for {touched} CI(s) until {_iso(data['until'])}"
@@ -527,8 +619,12 @@ class MaintenanceStore:
         return touched
 
     def apply_override_ended(self, payload: Mapping[str, Any]) -> int:
-        """Mark an override as ended (it lingers ``linger_minutes``); rows touched."""
-        data = parse_override_ended(payload)
+        """Mark an override as ended (it lingers ``linger_minutes``); rows touched.
+
+        An "ended" for an override without rows is remembered (see the contract
+        above) and ends the rows of a "started" that commits meanwhile."""
+        now = self._now()
+        data = parse_override_ended(payload, now)
 
         def _tx() -> int:
             with get_session() as s:
@@ -539,20 +635,59 @@ class MaintenanceStore:
                 if data["source"] is not None:
                     query = query.where(MaintenanceRecord.source == data["source"])
                 rows = s.execute(query).scalars().all()
+                linger = data["linger_minutes"]
+                if not rows:
+                    # Unknown override: the "started" has not been processed yet
+                    # (or was ignored). Remember the end for the linger period;
+                    # the first tombstone wins on re-delivery. A lost insert race
+                    # raises IntegrityError → re-run → no-op.
+                    key_source = data["source"] or ""
+                    known = s.execute(
+                        select(MaintenanceTombstone).where(
+                            MaintenanceTombstone.source == key_source,
+                            MaintenanceTombstone.override_id == data["override_id"],
+                        )
+                    ).scalar_one_or_none()
+                    if known is not None and known.expires_at > _to_db(now):
+                        return 0
+                    if known is not None:  # expired leftover of a reused id
+                        s.delete(known)
+                        s.flush()
+                    keep = DEFAULT_LINGER_MINUTES if linger is None else max(0, linger)
+                    ended = _to_db(data["ended_at"])
+                    s.add(MaintenanceTombstone(
+                        source=key_source, override_id=data["override_id"],
+                        ended_at=ended, linger_minutes=keep,
+                        expires_at=ended + timedelta(minutes=keep),
+                    ))
+                    s.commit()
+                    return 0
+                touched = 0
                 for row in rows:
+                    if row.ended_at is not None:
+                        continue  # re-delivered "ended": the first end wins
                     row.ended_at = _to_db(data["ended_at"])
-                    if data["linger_minutes"] is not None:
-                        row.linger_minutes = data["linger_minutes"]
+                    if linger is not None:
+                        row.linger_minutes = linger
+                    elif row.linger_minutes is None:
+                        row.linger_minutes = DEFAULT_LINGER_MINUTES
+                    touched += 1
                 s.commit()
-                return len(rows)
+                return touched
 
-        touched = retry_write(_tx)
+        try:
+            touched = retry_write(_tx)
+        except IntegrityError:
+            touched = retry_write(_tx)
+        if not touched:
+            # Tombstone written (or already there): the "started" may have
+            # committed meanwhile — close its rows now.
+            touched = self._apply_tombstone(data["source"], data["override_id"], now)
         if touched:
             log.info(
                 f"Maintenance: override {data['override_id']} ended for {touched} CI(s)"
             )
         else:
-            # Never started here, or already purged — nothing to end.
             log.debug(
                 f"Maintenance: override {data['override_id']} ended but unknown here"
             )
@@ -563,7 +698,7 @@ class MaintenanceStore:
         """Delete overrides whose effective end lies more than ``PURGE_GRACE`` in
         the past. Windows never expire (``once`` windows are replaced by the
         next publish of their source)."""
-        at = _aware(now) or utcnow()
+        at = _aware(now) or self._now()
         cutoff = at - PURGE_GRACE
         cutoff_db = _to_db(cutoff)
 
@@ -589,6 +724,11 @@ class MaintenanceStore:
                     s.execute(
                         delete(MaintenanceRecord).where(MaintenanceRecord.id.in_(chunk))
                     )
+                s.execute(
+                    delete(MaintenanceTombstone).where(
+                        MaintenanceTombstone.expires_at < _to_db(at)
+                    )
+                )
                 s.commit()
                 return len(doomed)
 
@@ -623,7 +763,7 @@ class MaintenanceStore:
         "not in maintenance, nothing scheduled".
         """
         wanted = [ci_id for ci_id in dict.fromkeys(ci_ids) if ci_id]
-        at = _aware(now) or utcnow()
+        at = _aware(now) or self._now()
         buckets: dict[str, tuple[list[MaintenanceRecord], list[MaintenanceRecord]]] = {
             ci_id: ([], []) for ci_id in wanted
         }

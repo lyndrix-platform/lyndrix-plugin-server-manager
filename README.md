@@ -25,7 +25,7 @@ tests/                 — Smoke tests
 
 ## What lives in the catalog
 
-The plugin loads configuration from `catalog/` at runtime:
+The plugin loads configuration from `catalog/` at runtime (site-specific, not tracked in git; when it is missing or empty the bundled `examples/` catalog is served as a whole):
 
 - `hardware.yml` for CPUs, RAM, storage, network and server type options.
 - `environments.yml` for provider/stage pairs and the profile each environment belongs to.
