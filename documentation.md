@@ -62,6 +62,7 @@ Andere Systeme (IaC-Orchestrator, CMDB, Skripte) können Server per API oder Eve
 - **Anlegen** verlangt `name`, `environment_id` und `server_type`; bei späteren Pushes werden nur die mitgeschickten Felder übernommen (PATCH-Semantik).
 - **Manuell angelegte Server** (`source` leer) werden nie getroffen und können von einem Fremdsystem nicht überschrieben werden.
 - `source` und `external_id` sind nach dem Anlegen unveränderlich.
+- **`ci_id` wird nie gelöscht:** Ein Push mit `ci_id` `null` oder leer lässt eine gespeicherte CI-ID unverändert; nur eine andere, explizit gesendete ID ersetzt sie.
 - Es werden die normalen Events (`server_created`, `server_updated`, …) emittiert.
 - **Schreibschutz vs. Rückschreiben (`writeback`):** Das liefernde System entscheidet pro Server, ob es Änderungen selbst persistieren kann.
   - `writeback: false` (Standard): Der Server ist in beiden UIs und über die normale API **schreibgeschützt** (🔒, `PATCH`/`DELETE` → `409`). Nur die Quelle selbst ändert ihn über den Ingest-Pfad.
@@ -130,10 +131,11 @@ Tooltip und Filter; eine Detailansicht ist ein Folgevorhaben).
 |---|---|---|
 | `maintenance:windows_published` | `{source, published_at, replaces, items: [{ci_id, kind, name, windows: [Normalform…], inherited_from, …}]}` | `replaces: true` ersetzt **alle** Fenster-Zeilen dieser `source` in einer Transaktion; `kind` ist offen (jeder Registry-Kind); ungültige Items werden protokolliert und übersprungen, der Rest wird gespeichert |
 | `maintenance:override_started` | `{override_id, ci_ids, until, reason, source, started_at, linger_minutes}` | Upsert je `(ci_id, override_id)`; aktiv von `started_at` bis `until` |
-| `maintenance:override_ended` | `{override_id, source, ended_at, linger_minutes}` | setzt `ended_at`; das Override läuft noch `linger_minutes` (Default 15) nach und wird beim Lesen danach ignoriert, später gelöscht |
+| `maintenance:override_ended` | `{override_id, source, ended_at, linger_minutes}` | setzt `ended_at`; das Override läuft noch `linger_minutes` (Default 15) nach und wird beim Lesen danach ignoriert, später gelöscht; ein erneut zugestelltes Ende überschreibt `ended_at` nicht |
 
 Regeln:
 
+- **Reihenfolge-tolerant (seit 1.5.0).** Ein `override_ended`, das vor seinem `override_started` eintrifft, wird als Tombstone gespeichert (Tabelle `server_manager_maintenance_tombstones`, bis `ended_at` + `linger_minutes`); das spät eintreffende Start-Event wird dann bereits als beendet abgelegt. Gleicher Vertrag wie in der Entity Registry.
 - **Eigene Tabelle, Auswertung beim Lesen.** Gespeichert wird nur, was die Emitter senden. Ob ein
   Fenster gerade läuft, berechnet `core.api.maintenance.effective_state` beim Lesen der Liste —
   kein Timer, kein Lease.
@@ -192,6 +194,10 @@ Die Hardware- und Umgebungskataloge werden aus YAML-Dateien im Katalogverzeichni
 
 Eigene Katalogdateien können über die Plugin-Einstellungen hochgeladen werden.
 
+**Regel-Auswerter (begrenzt, seit 1.5.0):** Ausdrücke in Profilregeln sind auf 500 Zeichen und 100 AST-Knoten beschränkt; Sequenz-Wiederholung und -Verkettung liefern höchstens 10 000 Elemente, `%`-Formatierung auf Strings ist nicht erlaubt, Ganzzahl-Ergebnisse sind auf 128 Bit begrenzt. Ein fehlerhaftes Profil führt in der Validierung nicht mehr zu HTTP 500.
+
+**NiceGUI-Seite:** `/server-manager` (NiceGUI) verlangt `api:write`; lesender Zugriff bleibt der React-UI vorbehalten.
+
 **`auto_enable_on_install=False`** — vor der ersten Nutzung müssen die Katalogdateien geprüft und ggf. angepasst werden.
 
 ---
@@ -233,7 +239,9 @@ bestehenden `create_all` unter dem Bootstrap-Lock angelegt)
 | `reason` | text, nullable | Grund des Overrides |
 | `updated_at` | datetime | Letzter Schreibzeitpunkt |
 
-Unique-Key: `(ci_id, source, kind, override_id)`. Abgelaufene Overrides werden beim Lesen ignoriert
+Tabelle: `server_manager_maintenance_tombstones` (seit 1.5.0) — vorgemerkte Enden zu noch unbekannten Overrides: `source` (leer = beliebig), `override_id`, `ended_at`, `linger_minutes`, `expires_at`, `created_at`; Unique-Key `(source, override_id)`.
+
+Unique-Key der Tabelle `server_manager_maintenance`: `(ci_id, source, kind, override_id)`. Abgelaufene Overrides werden beim Lesen ignoriert
 und ab einem Tag nach ihrem effektiven Ende gelegentlich gelöscht (bei Schreibvorgängen, höchstens
 alle 10 Minuten je Prozess).
 
