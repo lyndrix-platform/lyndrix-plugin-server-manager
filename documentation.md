@@ -1,76 +1,76 @@
-# Server Manager — Dokumentation
+# Server Manager — Documentation
 
-## Übersicht
+## Overview
 
-Der Server Manager ist ein zentrales Server-Inventar mit konfigurierbaren Hardware-Katalogen und Kombinationsregeln. Er erfasst Server mitsamt ihren Hardware-Profilen, Umgebungszuordnungen und Statusänderungen. Über den globalen Event-Bus werden reichhaltige Ereignisse emittiert, die nachgelagerte Bestell- und Provisionierungs-Workflows anderer Plugins (z. B. des IaC Orchestrators) anstoßen können.
+The Server Manager is a central server inventory with configurable hardware catalogs and combination rules. It records servers together with their hardware profiles, environment assignments and status changes. Rich events are emitted on the global event bus, which can trigger downstream ordering and provisioning workflows in other plugins (e.g. the IaC Orchestrator).
 
 ---
 
-## Architektur
+## Architecture
 
 ```
 lyndrix-plugin-server-manager/
-├── entrypoint.py               # Manifest + Lifecycle-Hooks
+├── entrypoint.py               # Manifest + lifecycle hooks
 ├── examples/
-│   ├── hardware.yml            # CPU-, RAM-, Storage-, Netzwerk-Optionen + Kombinationsregeln
-│   └── environments.yml        # Umgebungen und IT-Provider-Bestell-Workflows
+│   ├── hardware.yml            # CPU, RAM, storage, network options + combination rules
+│   └── environments.yml        # Environments and IT provider ordering workflows
 └── app/
-    ├── api.py                  # FastAPI-Router (Server-CRUD + Katalog + Wartungs-Read-Model)
+    ├── api.py                  # FastAPI router (server CRUD + catalog + maintenance read model)
     ├── model/
-    │   ├── models.py           # SQLAlchemy-Modelle (server_manager_servers, server_manager_maintenance)
-    │   ├── database.py         # DB-Session-Helfer, Tabelleninitialisierung
-    │   └── catalog.py          # YAML/JSON-Katalog-Loader + Regel-Evaluator
+    │   ├── models.py           # SQLAlchemy models (server_manager_servers, server_manager_maintenance)
+    │   ├── database.py         # DB session helpers, table initialisation
+    │   └── catalog.py          # YAML/JSON catalog loader + rule evaluator
     ├── controller/
-    │   ├── service.py          # CRUD + Event-Emission (Singleton: server_manager_service)
-    │   ├── maintenance.py      # Wartungsfenster-Read-Model (Core-API ≥ 1.13, Konsument)
-    │   └── configurator/       # 3-stufiger Hinzufügen-/Bearbeiten-Dialog
+    │   ├── service.py          # CRUD + event emission (singleton: server_manager_service)
+    │   ├── maintenance.py      # Maintenance window read model (Core API ≥ 1.13, consumer)
+    │   └── configurator/       # 3-step add/edit dialog
     └── ui/
-        ├── overview.py         # Server-Liste mit Suche / Filter (NiceGUI)
-        ├── settings.py         # Plugin-Einstellungen + Katalog-Dokumentation (NiceGUI)
-        ├── widget.py           # Kompaktes Dashboard-Widget (NiceGUI)
-        └── page.py             # Hauptseite /server-manager (NiceGUI)
+        ├── overview.py         # Server list with search / filter (NiceGUI)
+        ├── settings.py         # Plugin settings + catalog documentation (NiceGUI)
+        ├── widget.py           # Compact dashboard widget (NiceGUI)
+        └── page.py             # Main page /server-manager (NiceGUI)
 ```
 
-**`server_manager_service`** ist ein Singleton, das CRUD-Operationen an der Datenbank ausführt und bei jeder Änderung passende Events auf dem Event-Bus emittiert.
+**`server_manager_service`** is a singleton that performs the CRUD operations on the database and emits matching events on the event bus for every change.
 
-**`catalog.py`** lädt die YAML-Katalogdateien und wertet Kombinationsregeln aus, um sicherzustellen, dass nur gültige Hardware-Kombinationen ausgewählt werden können.
+**`catalog.py`** loads the YAML catalog files and evaluates combination rules to ensure that only valid hardware combinations can be selected.
 
 ---
 
-## API-Referenz
+## API Reference
 
-Alle Routen sind unter `/api/plugins/lyndrix.plugin.server_manager/` erreichbar und erfordern eine gültige Authentifizierung.
+All routes are reachable under `/api/plugins/lyndrix.plugin.server_manager/` and require valid authentication.
 
-| Methode | Pfad | Beschreibung |
+| Method | Path | Description |
 |---|---|---|
-| `GET` | `/servers` | Vollständige Server-Liste; jeder Eintrag mit `ci_id` trägt das Feld `maintenance` (siehe [Wartungsfenster](#wartungsfenster)). `?in_maintenance=true\|false` filtert auf den aktuellen Wartungszustand |
-| `GET` | `/servers/{id}` | Ein Server (inkl. `maintenance`) |
-| `POST` | `/servers` | Server hinzufügen (Hardware-Profil + Umgebung) |
-| `PATCH` | `/servers/{id}` | Server aktualisieren |
-| `DELETE` | `/servers/{id}` | Server entfernen |
-| `GET` | `/maintenance/{ci_id}` | Vollständiges Wartungs-Read-Model eines Configuration Items (Fenster je Quelle, laufende Overrides, `server_ids`) |
-| `GET` | `/catalog` | Verfügbarer Hardware-Katalog + Kombinationsregeln |
-| `PUT` | `/servers/external/{source}/{external_id}` | Server aus einem Fremdsystem anlegen oder aktualisieren (Upsert) |
-| `DELETE` | `/servers/external/{source}/{external_id}` | Von einem Fremdsystem gelieferten Server entfernen |
-| `POST` | `/servers/import` | Batch-Upsert `{servers: [...]}`, Ergebnis pro Eintrag |
+| `GET` | `/servers` | Complete server list; every entry with `ci_id` carries the field `maintenance` (see [Maintenance windows](#maintenance-windows)). `?in_maintenance=true\|false` filters by the current maintenance state |
+| `GET` | `/servers/{id}` | One server (incl. `maintenance`) |
+| `POST` | `/servers` | Add a server (hardware profile + environment) |
+| `PATCH` | `/servers/{id}` | Update a server |
+| `DELETE` | `/servers/{id}` | Remove a server |
+| `GET` | `/maintenance/{ci_id}` | Complete maintenance read model of a Configuration Item (windows per source, active overrides, `server_ids`) |
+| `GET` | `/catalog` | Available hardware catalog + combination rules |
+| `PUT` | `/servers/external/{source}/{external_id}` | Create or update a server from an external system (upsert) |
+| `DELETE` | `/servers/external/{source}/{external_id}` | Remove a server delivered by an external system |
+| `POST` | `/servers/import` | Batch upsert `{servers: [...]}`, result per entry |
 
-### Server aus Fremdsystemen (Ingest)
+### Servers from external systems (ingest)
 
-Andere Systeme (IaC-Orchestrator, CMDB, Skripte) können Server per API oder Event-Bus einspielen. Schlüssel ist das Paar **`source` + `external_id`** (z. B. `iac-orchestrator` / `docker-atlas`):
+Other systems (IaC Orchestrator, CMDB, scripts) can push servers in via the API or the event bus. The key is the pair **`source` + `external_id`** (e.g. `iac-orchestrator` / `docker-atlas`):
 
-- **Idempotent:** Wiederholtes Senden desselben Servers erzeugt keine Duplikate — ein Sync-Job kann sein komplettes Inventar bei jedem Lauf erneut schicken.
-- **Anlegen** verlangt `name`, `environment_id` und `server_type`; bei späteren Pushes werden nur die mitgeschickten Felder übernommen (PATCH-Semantik).
-- **Manuell angelegte Server** (`source` leer) werden nie getroffen und können von einem Fremdsystem nicht überschrieben werden.
-- `source` und `external_id` sind nach dem Anlegen unveränderlich.
-- **`ci_id` wird nie gelöscht:** Ein Push mit `ci_id` `null` oder leer lässt eine gespeicherte CI-ID unverändert; nur eine andere, explizit gesendete ID ersetzt sie.
-- Es werden die normalen Events (`server_created`, `server_updated`, …) emittiert.
-- **Schreibschutz vs. Rückschreiben (`writeback`):** Das liefernde System entscheidet pro Server, ob es Änderungen selbst persistieren kann.
-  - `writeback: false` (Standard): Der Server ist in beiden UIs und über die normale API **schreibgeschützt** (🔒, `PATCH`/`DELETE` → `409`). Nur die Quelle selbst ändert ihn über den Ingest-Pfad.
-  - `writeback: true`: Der Server ist editierbar. Eine Änderung wird lokal sofort übernommen, als `sync_state = pending` markiert und als `server_manager:writeback_requested` an die Quelle gemeldet (z. B. Commit ins IaC-Repository durch das IaC-Plugin). Der nächste Push der Quelle setzt den Server wieder auf „synchron“; meldet die Quelle `server_manager:writeback_failed`, zeigt die UI den Fehler an.
-  - Die Quelle bleibt die Wahrheit: Was sie nicht übernimmt, überschreibt ihr nächster Push.
-- **Berechtigung (REST):** Die Ingest-Routen verlangen die eigene Berechtigung `plugin:lyndrix.plugin.server_manager:server_manager:ingest` (Rolle „Server Manager Source System“ bzw. Administrator) — `api:write` genügt nicht, weil der Core dieses Recht jedem normalen Benutzer gibt. Die `source` ist nicht frei wählbar: ein Aufrufer darf nur als die Quelle liefern, die so heißt wie sein Konto (Service-Account/API-Key des Sync-Jobs, z. B. Benutzer `cmdb` → `source` `cmdb`), sonst `403`. Nur der System-API-Key und Inhaber von `…:server_manager:admin` dürfen für beliebige Quellen handeln. Damit kann niemand über REST einen fremden, schreibgeschützten Datensatz per `writeback: true` editierbar machen, seine `ci_id` umhängen oder ihn löschen. Der Event-Bus-Pfad (`register_server`) ist unverändert.
-- Katalog neu laden / Katalogpfad setzen (`POST /catalog/reload`, `POST /catalog/path`) verlangt `…:server_manager:admin`; `GET /catalog` liefert dazu `can_manage`.
-- Es gibt kein automatisches Aufräumen: Server, die ein Fremdsystem nicht mehr liefert, müssen explizit per `DELETE` bzw. `deregister_server` entfernt werden.
+- **Idempotent:** Sending the same server repeatedly does not create duplicates — a sync job can resend its complete inventory on every run.
+- **Creating** requires `name`, `environment_id` and `server_type`; on later pushes only the fields that are sent are applied (PATCH semantics).
+- **Manually created servers** (empty `source`) are never matched and cannot be overwritten by an external system.
+- `source` and `external_id` are immutable after creation.
+- **`ci_id` is never deleted:** A push with `ci_id` `null` or empty leaves a stored CI ID unchanged; only another, explicitly sent ID replaces it.
+- The regular events (`server_created`, `server_updated`, …) are emitted.
+- **Write protection vs. writeback (`writeback`):** The delivering system decides per server whether it can persist changes itself.
+  - `writeback: false` (default): The server is **read-only** in both UIs and via the regular API (🔒, `PATCH`/`DELETE` → `409`). Only the source itself changes it through the ingest path.
+  - `writeback: true`: The server is editable. A change is applied locally right away, marked as `sync_state = pending` and reported to the source as `server_manager:writeback_requested` (e.g. a commit into the IaC repository by the IaC plugin). The source's next push sets the server back to in sync; if the source reports `server_manager:writeback_failed`, the UI shows the error.
+  - The source remains the source of truth: whatever it does not persist is overwritten by its next push.
+- **Permission (REST):** The ingest routes require the dedicated permission `plugin:lyndrix.plugin.server_manager:server_manager:ingest` (role "Server Manager Source System" or Administrator) — `api:write` is not sufficient, because the core grants that right to every normal user. The `source` is not freely selectable: a caller may only deliver as the source that is named like its account (service account/API key of the sync job, e.g. user `cmdb` → `source` `cmdb`), otherwise `403`. Only the system API key and holders of `…:server_manager:admin` may act for arbitrary sources. This means nobody can use REST to make a foreign, read-only record editable via `writeback: true`, re-attach its `ci_id`, or delete it. The event bus path (`register_server`) is unchanged.
+- Reloading the catalog / setting the catalog path (`POST /catalog/reload`, `POST /catalog/path`) requires `…:server_manager:admin`; `GET /catalog` returns `can_manage` for this.
+- There is no automatic cleanup: servers that a source no longer delivers must be removed explicitly via `DELETE` or `deregister_server`.
 
 ```bash
 curl -X PUT -H "Authorization: Bearer <api-key>" -H "Content-Type: application/json" \
@@ -82,28 +82,28 @@ curl -X PUT -H "Authorization: Bearer <api-key>" -H "Content-Type: application/j
 
 ## Events
 
-### Emittierte Events
+### Emitted events
 
-| Topic | Payload | Beschreibung |
+| Topic | Payload | Description |
 |---|---|---|
-| `server_manager:server_created` | `{server}` | Neuer Server wurde angelegt |
-| `server_manager:server_updated` | `{server, changes: {field: {old, new}}}` | Server-Daten haben sich geändert |
-| `server_manager:server_deleted` | `{server}` | Server wurde entfernt (letzter bekannter Zustand) |
-| `server_manager:hardware_changed` | `{server_id, server_name, action, old_profile, new_profile, environment_id, server_type}` | Hardware-Profil geändert |
-| `server_manager:status_changed` | `{server_id, server_name, old_status, new_status}` | Status hat sich geändert |
+| `server_manager:server_created` | `{server}` | New server was created |
+| `server_manager:server_updated` | `{server, changes: {field: {old, new}}}` | Server data has changed |
+| `server_manager:server_deleted` | `{server}` | Server was removed (last known state) |
+| `server_manager:hardware_changed` | `{server_id, server_name, action, old_profile, new_profile, environment_id, server_type}` | Hardware profile changed |
+| `server_manager:status_changed` | `{server_id, server_name, old_status, new_status}` | Status has changed |
 
-| `server_manager:ingest_failed` | `{topic, source, external_id, error}` | Ein per Event-Bus eingespielter Server wurde abgewiesen |
-| `server_manager:writeback_requested` | `{action: update\|delete, source, external_id, server, changes}` | Ein Benutzer hat einen Server mit `writeback: true` geändert — die Quelle soll persistieren |
+| `server_manager:ingest_failed` | `{topic, source, external_id, error}` | A server fed in via the event bus was rejected |
+| `server_manager:writeback_requested` | `{action: update\|delete, source, external_id, server, changes}` | A user has changed a server with `writeback: true` — the source should persist it |
 
-### Abonnierte Events (Ingest)
+### Subscribed events (ingest)
 
-| Topic | Payload | Beschreibung |
+| Topic | Payload | Description |
 |---|---|---|
-| `server_manager:register_server` | `{source, external_id, name, environment_id, server_type, …}` | Server anlegen oder aktualisieren (gleiche Regeln wie der REST-Upsert) |
-| `server_manager:deregister_server` | `{source, external_id}` | Server entfernen |
-| `server_manager:writeback_failed` | `{source, external_id, error}` | Die Quelle konnte eine angeforderte Änderung nicht persistieren |
+| `server_manager:register_server` | `{source, external_id, name, environment_id, server_type, …}` | Create or update a server (same rules as the REST upsert) |
+| `server_manager:deregister_server` | `{source, external_id}` | Remove a server |
+| `server_manager:writeback_failed` | `{source, external_id, error}` | The source could not persist a requested change |
 
-Das sendende Plugin muss das Topic in seinem eigenen `permissions.emit` deklarieren. Da der Event-Bus keine Antwort liefert, werden Fehler über `server_manager:ingest_failed` zurückgemeldet.
+The sending plugin must declare the topic in its own `permissions.emit`. Since the event bus returns no response, errors are reported back via `server_manager:ingest_failed`.
 
 ```python
 ctx.emit("server_manager:register_server", {
@@ -117,37 +117,37 @@ ctx.emit("server_manager:register_server", {
 
 ---
 
-## Wartungsfenster
+## Maintenance windows
 
-Der Server Manager ist **Konsument** des Wartungsfenster-Vertrags der Core-API ≥ 1.13
-(`core.api.maintenance`, siehe `lyndrix-core/docs/plugins.md` → *Maintenance windows*). Er legt
-selbst keine Fenster an und emittiert keine `maintenance:*`-Events — er zeigt am Host, ob gerade
-ein Wartungsfenster oder ein Override (z. B. ein laufender Deploy) läuft (Entscheidung E: Badge,
-Tooltip und Filter; eine Detailansicht ist ein Folgevorhaben).
+The Server Manager is a **consumer** of the maintenance window contract of Core API ≥ 1.13
+(`core.api.maintenance`, see `lyndrix-core/docs/plugins.md` → *Maintenance windows*). It does not create
+windows itself and emits no `maintenance:*` events — it shows on the host whether a maintenance window
+or an override (e.g. a running deploy) is currently active (decision E: badge,
+tooltip and filter; a detail view is a follow-up project).
 
-### Abonnierte Events
+### Subscribed events
 
-| Topic | Payload | Verarbeitung |
+| Topic | Payload | Processing |
 |---|---|---|
-| `maintenance:windows_published` | `{source, published_at, replaces, items: [{ci_id, kind, name, windows: [Normalform…], inherited_from, …}]}` | `replaces: true` ersetzt **alle** Fenster-Zeilen dieser `source` in einer Transaktion; `kind` ist offen (jeder Registry-Kind); ungültige Items werden protokolliert und übersprungen, der Rest wird gespeichert |
-| `maintenance:override_started` | `{override_id, ci_ids, until, reason, source, started_at, linger_minutes}` | Upsert je `(ci_id, override_id)`; aktiv von `started_at` bis `until` |
-| `maintenance:override_ended` | `{override_id, source, ended_at, linger_minutes}` | setzt `ended_at`; das Override läuft noch `linger_minutes` (Default 15) nach und wird beim Lesen danach ignoriert, später gelöscht; ein erneut zugestelltes Ende überschreibt `ended_at` nicht |
+| `maintenance:windows_published` | `{source, published_at, replaces, items: [{ci_id, kind, name, windows: [normal form…], inherited_from, …}]}` | `replaces: true` replaces **all** window rows of this `source` in one transaction; `kind` is open (every Registry kind); invalid items are logged and skipped, the rest is stored |
+| `maintenance:override_started` | `{override_id, ci_ids, until, reason, source, started_at, linger_minutes}` | Upsert per `(ci_id, override_id)`; active from `started_at` until `until` |
+| `maintenance:override_ended` | `{override_id, source, ended_at, linger_minutes}` | Sets `ended_at`; the override keeps running for `linger_minutes` (default 15), is ignored on read after that, and is deleted later; a redelivered end does not overwrite `ended_at` |
 
-Regeln:
+Rules:
 
-- **Reihenfolge-tolerant (seit 1.5.0).** Ein `override_ended`, das vor seinem `override_started` eintrifft, wird als Tombstone gespeichert (Tabelle `server_manager_maintenance_tombstones`, bis `ended_at` + `linger_minutes`); das spät eintreffende Start-Event wird dann bereits als beendet abgelegt. Gleicher Vertrag wie in der Entity Registry.
-- **Eigene Tabelle, Auswertung beim Lesen.** Gespeichert wird nur, was die Emitter senden. Ob ein
-  Fenster gerade läuft, berechnet `core.api.maintenance.effective_state` beim Lesen der Liste —
-  kein Timer, kein Lease.
-- **Unbekannte `ci_id`s werden gespeichert.** Die Reihenfolge `windows_published` vor
-  `register_server` ist normal; die Zuordnung zum Server-Record passiert beim Lesen über
-  `server_manager_servers.ci_id`. Manuelle Server ohne `ci_id` haben kein Wartungs-Read-Model.
-- **Cluster:** Die Handler laufen auf jeder Instanz und schreiben idempotent in die gemeinsame
-  Tabelle (Unique-Key, Delete+Insert je Quelle). `payload["_origin"]` wird bewusst nicht gefiltert.
-- **Ohne Core-Bibliothek** (`min_core_version` bleibt `0.0.6`): Events werden gespeichert und roh
-  ausgeliefert, `active` ist `null`, das Badge bleibt aus.
+- **Order-tolerant (since 1.5.0).** An `override_ended` that arrives before its `override_started` is stored as a tombstone (table `server_manager_maintenance_tombstones`, until `ended_at` + `linger_minutes`); the late-arriving start event is then stored already as ended. Same contract as in the Entity Registry.
+- **Own table, evaluation at read time.** Only what the emitters send is stored. Whether a
+  window is currently running is computed by `core.api.maintenance.effective_state` when the list is read —
+  no timer, no lease.
+- **Unknown `ci_id`s are stored.** It is normal for `windows_published` to arrive before
+  `register_server`; the assignment to the server record happens at read time via
+  `server_manager_servers.ci_id`. Manual servers without `ci_id` have no maintenance read model.
+- **Cluster:** The handlers run on every instance and write idempotently into the shared
+  table (unique key, delete+insert per source). `payload["_origin"]` is deliberately not filtered.
+- **Without the core library** (`min_core_version` stays `0.0.6`): Events are stored and delivered raw,
+  `active` is `null`, the badge stays off.
 
-### Read-Model (`maintenance` an jedem Server mit `ci_id`)
+### Read model (`maintenance` on every server with `ci_id`)
 
 ```json
 {
@@ -169,101 +169,101 @@ Regeln:
 }
 ```
 
-`source` ist `window` oder `override` (ein aktives Override gewinnt, `until` ist das spätere Ende),
-`next_start` der Beginn des nächsten noch nicht laufenden Fensters (Horizont 30 Tage). Abgelaufene
-Overrides erscheinen nicht. `GET /maintenance/{ci_id}` liefert dasselbe plus `ci_id` und
-`server_ids`; für ein unbekanntes CI kommt `200` mit leeren Listen („nicht in Wartung“).
+`source` is `window` or `override` (an active override wins, `until` is the later end),
+`next_start` is the start of the next window that is not yet running (horizon 30 days). Expired
+overrides do not appear. `GET /maintenance/{ci_id}` returns the same plus `ci_id` and
+`server_ids`; for an unknown CI it returns `200` with empty lists ("not in maintenance").
 
-### Anzeige (React)
+### Display (React)
 
-In der Status-Spalte erscheint neben dem Status-Badge ein Wartungs-Badge: „Wartung bis hh:mm“,
-solange ein Fenster oder Override läuft, „Wartung ab …“, wenn das nächste Fenster innerhalb von
-24 h beginnt. Der Tooltip nennt Quelle (Emitter, ggf. „geerbt von host/stage_default/…“), Grund
-und Ende. Die Filterleiste hat einen Filter „Wartung: alle / In Wartung / Nicht in Wartung“.
-Das Badge nutzt die Shell-Klasse `lx-badge--maintenance` (Token `--lx-state-maintenance`) mit
-`lx-badge--paused` als Fallback auf älteren Shells. Die NiceGUI-Seiten sind unverändert.
-
----
-
-## Konfiguration & Katalog
-
-Die Hardware- und Umgebungskataloge werden aus YAML-Dateien im Katalogverzeichnis geladen (Standard `catalog/` im Plugin-Verzeichnis, umstellbar in den Einstellungen). Das Verzeichnis `catalog/` ist standortspezifisch und nicht Teil des Repositories: fehlt es oder enthält es keine Katalogdateien, lädt das Plugin als Ganzes den mitgelieferten Beispielkatalog aus `examples/` (`bundled_fallback: true` in `GET /catalog` und in den Health-Details). Enthält das Verzeichnis Dateien, aber keinen nutzbaren Katalog (keine Servertypen/Umgebungen), meldet `health()` `degraded` mit `reason: catalog_not_loaded`. Die Kataloge definieren:
-
-- **`hardware.yml`:** Verfügbare CPU-, RAM-, Storage- und Netzwerk-Optionen sowie Kombinationsregeln, die ungültige Konfigurationen ausschließen.
-- **`environments.yml`:** Umgebungsdefinitionen (z. B. `prod`, `staging`, `dev`) und die zugehörigen IT-Provider-Workflows für Bestellprozesse.
-
-Eigene Katalogdateien können über die Plugin-Einstellungen hochgeladen werden.
-
-**Regel-Auswerter (begrenzt, seit 1.5.0):** Ausdrücke in Profilregeln sind auf 500 Zeichen und 100 AST-Knoten beschränkt; Sequenz-Wiederholung und -Verkettung liefern höchstens 10 000 Elemente, `%`-Formatierung auf Strings ist nicht erlaubt, Ganzzahl-Ergebnisse sind auf 128 Bit begrenzt. Ein fehlerhaftes Profil führt in der Validierung nicht mehr zu HTTP 500.
-
-**NiceGUI-Seite:** `/server-manager` (NiceGUI) verlangt `api:write`; lesender Zugriff bleibt der React-UI vorbehalten.
-
-**`auto_enable_on_install=False`** — vor der ersten Nutzung müssen die Katalogdateien geprüft und ggf. angepasst werden.
+In the status column, a maintenance badge appears next to the status badge: "Maintenance until hh:mm"
+while a window or override is running, "Maintenance from …" when the next window starts within
+24 h. The tooltip names the source (emitter, possibly "inherited from host/stage_default/…"), reason
+and end. The filter bar has a filter "Maintenance: all / In maintenance / Not in maintenance".
+The badge uses the shell class `lx-badge--maintenance` (token `--lx-state-maintenance`) with
+`lx-badge--paused` as fallback on older shells. The NiceGUI pages are unchanged.
 
 ---
 
-## Datenbankschema
+## Configuration & Catalog
 
-Tabelle: `server_manager_servers`
+The hardware and environment catalogs are loaded from YAML files in the catalog directory (default `catalog/` in the plugin directory, changeable in the settings). The `catalog/` directory is site-specific and not part of the repository: if it is missing or contains no catalog files, the plugin loads the bundled example catalog from `examples/` as a whole (`bundled_fallback: true` in `GET /catalog` and in the health details). If the directory contains files but no usable catalog (no server types/environments), `health()` reports `degraded` with `reason: catalog_not_loaded`. The catalogs define:
 
-| Spalte | Typ | Beschreibung |
+- **`hardware.yml`:** Available CPU, RAM, storage and network options as well as combination rules that exclude invalid configurations.
+- **`environments.yml`:** Environment definitions (e.g. `prod`, `staging`, `dev`) and the associated IT provider workflows for ordering processes.
+
+Custom catalog files can be uploaded via the plugin settings.
+
+**Rule evaluator (limited, since 1.5.0):** Expressions in profile rules are limited to 500 characters and 100 AST nodes; sequence repetition and concatenation yield at most 10,000 elements, `%` formatting on strings is not allowed, integer results are limited to 128 bits. An invalid profile no longer leads to HTTP 500 during validation.
+
+**NiceGUI page:** `/server-manager` (NiceGUI) requires `api:write`; read-only access remains reserved for the React UI.
+
+**`auto_enable_on_install=False`** — before first use, the catalog files must be reviewed and adjusted if necessary.
+
+---
+
+## Database schema
+
+Table: `server_manager_servers`
+
+| Column | Type | Description |
 |---|---|---|
-| `id` | UUID / int | Primärschlüssel |
-| `name` | string | Server-Bezeichnung |
-| `hardware_profile` | JSON | Ausgewähltes Hardware-Profil (aus Katalog) |
-| `environment_id` | string | Zugewiesene Umgebung |
-| `server_type` | string | Typ-Klassifikation |
-| `status` | string | Aktueller Status (`active`, `decommissioned`, …) |
-| `source` | string, nullable | Herkunftssystem; leer = manuell angelegt |
-| `external_id` | string, nullable | ID im Herkunftssystem; eindeutig zusammen mit `source` |
-| `writeback` | bool | Quelle kann Änderungen persistieren (sonst schreibgeschützt) |
-| `sync_state` / `sync_error` | string, nullable | Rückschreib-Status: leer = synchron, `pending`, `failed` (+ Fehlertext) |
-| `ci_id` | string(36), nullable, Index | Entity-Registry-UUID des Configuration Items; Join-Schlüssel für das Wartungs-Read-Model |
-| `created_at` | datetime | Anlagezeitpunkt |
-| `updated_at` | datetime | Letzter Änderungszeitpunkt |
+| `id` | UUID / int | Primary key |
+| `name` | string | Server name |
+| `hardware_profile` | JSON | Selected hardware profile (from catalog) |
+| `environment_id` | string | Assigned environment |
+| `server_type` | string | Type classification |
+| `status` | string | Current status (`active`, `decommissioned`, …) |
+| `source` | string, nullable | Originating system; empty = created manually |
+| `external_id` | string, nullable | ID in the originating system; unique together with `source` |
+| `writeback` | bool | Source can persist changes (otherwise read-only) |
+| `sync_state` / `sync_error` | string, nullable | Writeback status: empty = in sync, `pending`, `failed` (+ error text) |
+| `ci_id` | string(36), nullable, index | Entity Registry UUID of the Configuration Item; join key for the maintenance read model |
+| `created_at` | datetime | Creation timestamp |
+| `updated_at` | datetime | Last change timestamp |
 
-Tabelle: `server_manager_maintenance` (Read-Model der Wartungsfenster, seit 1.4.0; wird vom
-bestehenden `create_all` unter dem Bootstrap-Lock angelegt)
+Table: `server_manager_maintenance` (read model of the maintenance windows, since 1.4.0; created by the
+existing `create_all` under the bootstrap lock)
 
-| Spalte | Typ | Beschreibung |
+| Column | Type | Description |
 |---|---|---|
-| `id` | int | Primärschlüssel |
-| `ci_id` | string(36), Index | Configuration Item, auch ohne Server-Record |
-| `kind` | string(16) | `window` (publizierter Fenstersatz) oder `override` |
-| `source` | string(64), Index | Emitter (`iac-orchestrator`, `monitoring`, …) |
-| `override_id` | string(128), Index | Override-ID; bei `window`-Zeilen leer (`""`, damit der Unique-Key greift) |
-| `windows` | JSON, nullable | Fenster in der Bus-Normalform (`{"type": …}`) |
-| `inherited_from` | string(32), nullable | `host`, `stage_default`, `site_default` oder leer |
-| `until` / `started_at` / `ended_at` | datetime (UTC, naiv), nullable | Override-Zeiten |
-| `linger_minutes` | int, nullable | Nachlauf nach `ended_at` (Default 15) |
-| `reason` | text, nullable | Grund des Overrides |
-| `updated_at` | datetime | Letzter Schreibzeitpunkt |
+| `id` | int | Primary key |
+| `ci_id` | string(36), index | Configuration Item, also without server record |
+| `kind` | string(16) | `window` (published window set) or `override` |
+| `source` | string(64), index | Emitter (`iac-orchestrator`, `monitoring`, …) |
+| `override_id` | string(128), index | Override ID; empty (`""`, so the unique key applies) for `window` rows |
+| `windows` | JSON, nullable | Windows in the bus normal form (`{"type": …}`) |
+| `inherited_from` | string(32), nullable | `host`, `stage_default`, `site_default` or empty |
+| `until` / `started_at` / `ended_at` | datetime (UTC, naive), nullable | Override times |
+| `linger_minutes` | int, nullable | Follow-up time after `ended_at` (default 15) |
+| `reason` | text, nullable | Reason of the override |
+| `updated_at` | datetime | Last write timestamp |
 
-Tabelle: `server_manager_maintenance_tombstones` (seit 1.5.0) — vorgemerkte Enden zu noch unbekannten Overrides: `source` (leer = beliebig), `override_id`, `ended_at`, `linger_minutes`, `expires_at`, `created_at`; Unique-Key `(source, override_id)`.
+Table: `server_manager_maintenance_tombstones` (since 1.5.0) — noted ends for not-yet-known overrides: `source` (empty = any), `override_id`, `ended_at`, `linger_minutes`, `expires_at`, `created_at`; unique key `(source, override_id)`.
 
-Unique-Key der Tabelle `server_manager_maintenance`: `(ci_id, source, kind, override_id)`. Abgelaufene Overrides werden beim Lesen ignoriert
-und ab einem Tag nach ihrem effektiven Ende gelegentlich gelöscht (bei Schreibvorgängen, höchstens
-alle 10 Minuten je Prozess).
+Unique key of table `server_manager_maintenance`: `(ci_id, source, kind, override_id)`. Expired overrides are ignored on read
+and occasionally deleted one day after their effective end (during write operations, at most
+every 10 minutes per process).
 
 ---
 
-## Entwicklung & Tests
+## Development & Tests
 
 ```bash
-# Aus dem Plugin-Verzeichnis (lyndrix-plugin-server-manager/)
+# From the plugin directory (lyndrix-plugin-server-manager/)
 pip install -r requirements-dev.txt
 
-# Tests ausführen
+# Run tests
 pytest
 
-# Typprüfung
+# Type checking
 mypy .
 
 # Linter
 ruff check .
 
-# Formatter prüfen
+# Check formatter
 black --check .
 ```
 
-Model- und Controller-Schicht sind ohne laufenden Core testbar. `ModuleContext` kann für Lifecycle-Tests gemockt werden.
+The model and controller layers are testable without a running core. `ModuleContext` can be mocked for lifecycle tests.
